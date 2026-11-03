@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>日本の寺院マップ — 宗派・寺格・歴史</title>
+<meta name="description" content="全国の仏教寺院を宗派ごとに色分けし、寺格と創建の歴史とともに地図で見るサイト">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header class="brand">
+      <div class="seal">寺</div>
+      <div>
+        <h1>日本の寺院マップ</h1>
+        <p id="summary" class="muted">読み込み中…</p>
+      </div>
+      <button id="panelToggle" class="icon-btn" aria-label="パネルを閉じる">✕</button>
+    </header>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="filter">絞り込み</button>
+      <button class="tab" data-tab="history">宗派の歴史</button>
+      <button class="tab" data-tab="rank">寺格</button>
+      <button class="tab" data-tab="about">このサイト</button>
+    </nav>
+
+    <section class="pane active" id="pane-filter">
+      <div class="search">
+        <input id="search" type="search" placeholder="寺の名前で探す(例:善光寺)" autocomplete="off">
+        <ul id="results"></ul>
+      </div>
+
+      <div class="block">
+        <div class="block-head">
+          <h2>宗派</h2>
+          <span class="links"><a href="#" id="sectAll">すべて</a> / <a href="#" id="sectNone">解除</a></span>
+        </div>
+        <ul id="sectList" class="sect-list"></ul>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h2>寺格</h2><span class="muted small">段をクリックで表示切替</span></div>
+        <div id="pyramid" class="pyramid"></div>
+      </div>
+
+      <div class="block">
+        <div class="block-head"><h2>創建年</h2><span id="yearLabel" class="year-label">すべて</span></div>
+        <div class="year-row">
+          <button id="play" class="play" aria-label="時代を再生">▶</button>
+          <input id="year" type="range" min="550" max="2030" step="10" value="2030">
+        </div>
+        <div class="era-scale"><span>飛鳥</span><span>奈良</span><span>平安</span><span>鎌倉</span><span>室町</span><span>江戸</span><span>近代</span></div>
+        <label class="check"><input type="checkbox" id="showUnknownYear" checked> 創建年が分からない寺も表示</label>
+      </div>
+
+      <div class="block">
+        <h2>表示する種類</h2>
+        <label class="check"><input type="checkbox" id="showHalls" checked> お堂・庵・観音堂なども表示</label>
+        <label class="check"><input type="checkbox" id="showNoname"> 名前が登録されていないものも表示</label>
+      </div>
+
+      <p id="visibleCount" class="visible-count"></p>
+    </section>
+
+    <section class="pane" id="pane-history">
+      <p class="muted small">各宗派が日本で成立・伝来した年の目安(通説)です。項目を押すとその宗派だけを地図に表示します。</p>
+      <div id="timeline" class="timeline"></div>
+    </section>
+
+    <section class="pane" id="pane-rank">
+      <div id="rankInfo"></div>
+    </section>
+
+    <section class="pane" id="pane-about">
+      <h2>データについて</h2>
+      <p>寺の位置・名前・宗派は <a href="https://www.openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap</a>、創建年・開山・寺の説明は <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> と <a href="https://ja.wikipedia.org/" target="_blank" rel="noopener">Wikipedia</a> から自動で集めています。主要な総本山・大本山は手入力のリストで補っています。</p>
+      <p>宗派や寺格が登録されていない寺は「宗派不明」「一般寺院」として表示されます。創建年の「推定」はWikipediaの本文から機械的に読み取ったもので、誤りを含むことがあります。</p>
+      <p id="aboutStats" class="muted small"></p>
+      <p class="muted small">地図:国土地理院(地理院タイル)/ 寺院データ:© OpenStreetMap contributors (ODbL)、Wikidata (CC0)、Wikipedia (CC BY-SA)</p>
+    </section>
+  </aside>
+
+  <button id="panelOpen" class="panel-open" aria-label="パネルを開く">☰ 絞り込み</button>
+  <div id="map"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
