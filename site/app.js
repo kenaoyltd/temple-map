@@ -369,6 +369,13 @@
   kwCss.textContent = `.kw{margin-top:8px}.kw form{display:flex;gap:6px}.kw input{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fffdf8;font:inherit;font-size:13px}.kw button{border:0;border-radius:6px;background:var(--accent);color:#fff;padding:0 12px;font:inherit;font-size:13px;cursor:pointer}#kwStatus{margin-top:4px}#kwResults{list-style:none;margin:4px 0 0;padding:0;max-height:240px;overflow:auto}#kwResults li{padding:6px 4px;border-bottom:1px dashed var(--line);cursor:pointer;font-size:12.5px}#kwResults li:hover{background:var(--paper-2)}#kwResults .snip{display:block;color:var(--ink-2);font-size:11.5px;line-height:1.5}#kwResults .searchmatch{background:#f3e7c0;color:var(--ink)}.pop{max-height:62vh;overflow-y:auto}.pop details.more{border-top:1px dashed var(--line);padding:6px 0}.pop details.more summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent)}.pop .more-body{font-size:12.5px;line-height:1.7;margin-top:6px}.pop .more-body h4{font-size:13px;margin:8px 0 2px;font-family:var(--font)}.pop .hist{margin:0}.pop ul.ndl{margin:0;padding-left:18px}.pop ul.ndl li{margin-bottom:4px}.pop ul.ndl .src{display:block}`;
   document.head.appendChild(kwCss);
 
+  // 人物名を押すと人物カード(家系図)を開けるようにする
+  const personLinks = (txt) => esc(txt).split("、").map((part) => {
+    const m = part.match(/^((?:開山|開基|中興)\s*)?(.+)$/);
+    const nm = (m[2] || "").replace(/[(（][^)）]*[)）]/g, "").trim();
+    return nm && !/不明|不詳|^伝$/.test(nm) ? `${m[1] || ""}<a href="#" class="pname" data-name="${nm}">${m[2]}</a>` : part;
+  }).join("、");
+
   // ---------------- 詳細ポップアップ
   let popup = null;
   function openPopup(i) {
@@ -401,7 +408,7 @@
         <dt>寺格</dt><dd>${esc(rankText)}</dd>
         ${val(r, "honzon") ? `<dt>本尊</dt><dd>${esc(val(r, "honzon"))}</dd>` : ""}
         <dt>創建</dt><dd>${esc(year)}${r[F.ysrc] ? ` <span class="src">出典:${YSRC[r[F.ysrc]]}</span>` : ""}</dd>
-        ${r[F.founder] ? `<dt>開山・開基</dt><dd>${esc(r[F.founder])}</dd>` : ""}
+        ${r[F.founder] ? `<dt>開山・開基</dt><dd>${personLinks(r[F.founder])}</dd>` : ""}
         ${val(r, "chuko") ? `<dt>中興</dt><dd>${esc(val(r, "chuko"))}</dd>` : ""}
         ${val(r, "fuda") ? `<dt>札所</dt><dd>${esc(val(r, "fuda"))}</dd>` : ""}
         ${val(r, "bunka") ? `<dt>文化財</dt><dd>${esc(val(r, "bunka"))}</dd>` : ""}

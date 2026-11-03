@@ -86,6 +86,7 @@
           `<span class="badge ${r.strong ? "strong" : "weak"}">${r.strong ? "ゆかり深い" : "関連"}</span>${r.lat == null ? ' <span class="nogeo">(位置情報なし)</span>' : ""}` +
           `<span class="snip">${r.snippet}</span></li>`;
       }).join("");
+      document.dispatchEvent(new CustomEvent("person-results", { detail: { n: shown.length } }));
       return shown;
     };
     pane.querySelectorAll(".ps-types input, #psStrongOnly").forEach((x) => x.addEventListener("change", draw));
@@ -160,7 +161,8 @@
         const shown = draw();
         const cnt = (k) => results.filter((r) => r.type === k).length;
         st.innerHTML = `「${esc(title)}」ゆかりの場所:${TYPES.map((t) => `${t.label} ${fmt(cnt(t.k))}`).join("・")}(うち「ゆかり深い」${fmt(results.filter((r) => r.strong).length)})。` +
-          `<br>「ゆかり深い」は墓所・菩提寺・開基・生誕などの言葉が記事に出てくるものの目安です。<a href="#" id="psClear">表示を消す</a>`;
+          `<br><a href="#" class="pname" data-name="${esc(title)}">${esc(title)}の人物紹介・家系図</a> ・ <a href="#" id="psClear">表示を消す</a>` +
+          `<br>「ゆかり深い」は墓所・菩提寺・開基・生誕などの言葉が記事に出てくるものの目安です。`;
         document.getElementById("psClear").onclick = (ev) => { ev.preventDefault(); results = []; draw(); st.textContent = ""; };
         const geo = shown.filter((r) => r.lat != null);
         if (geo.length) {
