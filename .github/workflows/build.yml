@@ -61,6 +61,7 @@ jobs:
           pip install requests openpyxl
           python scripts/pipeline.py all
           python scripts/population.py
+          python scripts/persons.py
 
       - name: 取得したデータを保存(次回の再利用用)
         if: always()
