@@ -58,8 +58,9 @@ jobs:
           REGION: ${{ steps.cfg.outputs.region }}
           REFRESH: ${{ steps.cfg.outputs.refresh }}
         run: |
-          pip install requests
+          pip install requests openpyxl
           python scripts/pipeline.py all
+          python scripts/population.py
 
       - name: 取得したデータを保存(次回の再利用用)
         if: always()
