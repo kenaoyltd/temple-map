@@ -112,6 +112,8 @@
       paint: { "text-color": "#5f564a", "text-halo-color": "#f6f1e7", "text-halo-width": 1.4 },
     });
     applyFilter();
+    window.TM = { map, rows, F, SECTS, openPopup, flyTo, titleToIdx, esc, fmt };
+    document.dispatchEvent(new Event("tm-ready"));
     if (!location.hash || location.hash.length < 4) {
       // データのある範囲に合わせて表示(外れ値を除くため上下1%を切る)
       const lats = rows.map((r) => r[F.lat]).sort((a, b) => a - b);
