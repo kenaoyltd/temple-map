@@ -69,6 +69,9 @@ jobs:
           path: raw
           key: raw-${{ steps.cfg.outputs.key }}-${{ github.run_id }}
 
+      - name: 更新がすぐ反映されるようにファイル名に版番号を付ける
+        run: sed -i -E 's/(src|href)="([a-z]+\.(js|css))"/\1="\2?v=${{ github.run_id }}"/g' site/index.html
+
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
