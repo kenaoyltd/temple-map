@@ -12,7 +12,10 @@
   const TIERS = meta.tiers;
   const F = Object.fromEntries(data.fields.map((f, i) => [f, i]));
   const rows = data.rows;
-  const YSRC = ["", "Wikidata", "Wikipedia本文から推定", "主要寺院リスト"];
+  const YSRC = ["", "Wikidata", "Wikipedia本文から推定", "主要寺院リスト", "Wikipedia情報欄"];
+  const HAS = (k) => F[k] !== undefined;
+  const val = (r, k) => (HAS(k) ? r[F[k]] : "");
+  const FLAGS = [["札所", "霊場の札所"], ["国宝", "国宝あり"], ["重文", "重要文化財あり"], ["指定文化財", "県・市町村指定文化財"], ["門跡・勅願", "門跡・勅願寺"]];
 
   // ---------------- 状態
   const state = {
@@ -22,6 +25,7 @@
     unknownYear: true,
     halls: true,
     noname: false,
+    flags: new Set(),
   };
 
   // ---------------- 集計
@@ -41,7 +45,7 @@
     features: rows.map((r, i) => ({
       type: "Feature", id: i,
       geometry: { type: "Point", coordinates: [r[F.lon], r[F.lat]] },
-      properties: { i, s: r[F.sect], t: r[F.tier], y: r[F.year], k: r[F.kind], n: r[F.name] },
+      properties: { i, s: r[F.sect], t: r[F.tier], y: r[F.year], k: r[F.kind], n: r[F.name], fl: val(r, "flags") || "" },
     })),
   };
 
@@ -83,8 +87,8 @@
           9, radius(10, 7, 4, 2.8),
           14, radius(14, 11, 8, 6.5)],
         "circle-opacity": ["interpolate", ["linear"], ["zoom"], 4, 0.75, 10, 0.95],
-        "circle-stroke-color": ["match", ["get", "t"], 1, "#2b2620", 2, "#2b2620", "#ffffff"],
-        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, ["match", ["get", "t"], 1, 1.2, 2, 0.8, 0], 11, ["match", ["get", "t"], 1, 2, 2, 1.5, 0.8]],
+        "circle-stroke-color": ["case", ["<=", ["get", "t"], 2], "#2b2620", ["!=", ["get", "fl"], ""], "#c9a227", "#ffffff"],
+        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, ["case", ["==", ["get", "t"], 1], 1.2, ["==", ["get", "t"], 2], 0.8, ["!=", ["get", "fl"], ""], 1, 0], 11, ["case", ["==", ["get", "t"], 1], 2, ["==", ["get", "t"], 2], 1.5, ["!=", ["get", "fl"], ""], 2.2, 0.8]],
       },
     });
     map.addLayer({
@@ -132,6 +136,7 @@
     const k = r[F.kind];
     if (k === 1 && !state.halls) return false;
     if (k === 2 && !state.noname) return false;
+    if (state.flags.size) { const fl = val(r, "flags") || ""; if (![...state.flags].some((f) => fl.includes("|" + f + "|"))) return false; }
     return true;
   }
   function applyFilter() {
@@ -145,6 +150,7 @@
       yearExpr,
       ["in", ["get", "k"], ["literal", kinds]],
     ];
+    if (state.flags.size) filter.push(["any", ...[...state.flags].map((f) => ["in", "|" + f + "|", ["get", "fl"]])]);
     if (map.getLayer("temples")) {
       map.setFilter("temples", filter);
       map.setFilter("labels", ["all", filter, ["<=", ["get", "t"], 2]]);
@@ -152,7 +158,7 @@
     }
     let n = 0; for (const r of rows) if (passes(r)) n++;
     $("#visibleCount").textContent = `地図に表示中:${fmt(n)} 件`;
-    renderSects(); renderPyramid();
+    renderSects(); renderPyramid(); renderFlags();
   }
 
   // ---------------- 宗派リスト
@@ -188,6 +194,27 @@
     state.tiers.has(t) ? state.tiers.delete(t) : state.tiers.add(t);
     applyFilter();
   });
+  // ---------------- 格式タグ(札所・文化財など)
+  const flagCount = Object.fromEntries(FLAGS.map(([k]) => [k, 0]));
+  for (const r of rows) { const fl = val(r, "flags") || ""; for (const [k] of FLAGS) if (fl.includes("|" + k + "|")) flagCount[k]++; }
+  const flagBlock = document.createElement("div");
+  flagBlock.className = "block";
+  flagBlock.innerHTML = `<div class="block-head"><h2>格式</h2><span class="muted small">選ぶと該当する寺だけ表示</span></div><div id="flagChips" class="chips"></div>`;
+  $("#pyramid").closest(".block").after(flagBlock);
+  function renderFlags() {
+    $("#flagChips").innerHTML = FLAGS.map(([k, label]) =>
+      `<button class="chip ${state.flags.has(k) ? "on" : ""}" data-k="${k}" ${flagCount[k] ? "" : "disabled"}>${esc(label)}<span>${fmt(flagCount[k])}</span></button>`).join("");
+  }
+  $("#flagChips").addEventListener("click", (e) => {
+    const b = e.target.closest(".chip"); if (!b || b.disabled) return;
+    const k = b.dataset.k;
+    state.flags.has(k) ? state.flags.delete(k) : state.flags.add(k);
+    applyFilter();
+  });
+  const chipCss = document.createElement("style");
+  chipCss.textContent = `.chips{display:flex;flex-wrap:wrap;gap:6px}.chip{border:1px solid var(--line);background:#fffdf8;border-radius:16px;padding:5px 10px;font:inherit;font-size:12px;cursor:pointer;color:var(--ink);display:inline-flex;gap:6px;align-items:center}.chip span{color:var(--ink-2);font-size:11px}.chip.on{background:#c9a227;border-color:#c9a227;color:#fff}.chip.on span{color:#fff}.chip:disabled{opacity:.4;cursor:default}.pop .tag.flag{background:#f3e7c0;color:#6b5310}`;
+  document.head.appendChild(chipCss);
+
   $("#rankInfo").innerHTML = `<p class="muted small">${esc(meta.tier_note)}</p>` + TIERS.map((t) => `
     <div class="rank-card"><h3>${"▲".repeat(5 - t.tier)} ${esc(t.name)}<span class="num">${fmt(tierCount[t.tier])} 件</span></h3><p>${esc(t.detail)}</p></div>`).join("") +
     `<h2 style="margin-top:16px">頂点の寺</h2><ul id="topList" class="sect-list"></ul>`;
@@ -278,7 +305,12 @@
     const tier = TIERS.find((t) => t.tier === r[F.tier]);
     const name = r[F.name] || "(名前の登録なし)";
     const rankText = r[F.rank] || (r[F.tier] === 4 ? "一般寺院(寺格不明を含む)" : tier.name);
-    const year = r[F.year] ? `${r[F.year]}年` + (r[F.ysrc] === 2 ? "(推定)" : "") : "不明";
+    const yt = val(r, "ytext");
+    const legend = val(r, "legend") ? "(伝承)" : "";
+    let year = r[F.year] ? `${r[F.year]}年` + (r[F.ysrc] === 2 ? "(推定)" : "") + legend : "不明";
+    if (yt && !/^\d{3,4}年$/.test(yt)) year = !r[F.year] ? yt : yt.includes(r[F.year] + "年") ? yt + legend : `${yt} → 西暦${r[F.year]}年頃${legend}`;
+    const flags = (val(r, "flags") || "").split("|").filter(Boolean);
+    const FLAG_LABEL = Object.fromEntries(FLAGS);
     const links = [];
     if (r[F.wp]) links.push(`<a href="https://ja.wikipedia.org/wiki/${encodeURIComponent(r[F.wp])}" target="_blank" rel="noopener">Wikipedia</a>`);
     links.push(`<a href="https://www.google.com/maps/search/?api=1&query=${r[F.lat]},${r[F.lon]}" target="_blank" rel="noopener">Googleマップ</a>`);
@@ -289,11 +321,18 @@
       <div class="tags">
         <span class="tag sect" style="background:${s.color}">${esc(s.name)}</span>
         <span class="tag">${esc(rankText)}</span>
+        ${flags.map((f) => `<span class="tag flag">${esc(FLAG_LABEL[f] || f)}</span>`).join("")}
       </div>
       <dl>
+        ${val(r, "sango") ? `<dt>山号</dt><dd>${esc(val(r, "sango"))}</dd>` : ""}
         <dt>宗派</dt><dd>${esc(r[F.branch] || s.name)}</dd>
+        <dt>寺格</dt><dd>${esc(rankText)}</dd>
+        ${val(r, "honzon") ? `<dt>本尊</dt><dd>${esc(val(r, "honzon"))}</dd>` : ""}
         <dt>創建</dt><dd>${esc(year)}${r[F.ysrc] ? ` <span class="src">出典:${YSRC[r[F.ysrc]]}</span>` : ""}</dd>
         ${r[F.founder] ? `<dt>開山・開基</dt><dd>${esc(r[F.founder])}</dd>` : ""}
+        ${val(r, "chuko") ? `<dt>中興</dt><dd>${esc(val(r, "chuko"))}</dd>` : ""}
+        ${val(r, "fuda") ? `<dt>札所</dt><dd>${esc(val(r, "fuda"))}</dd>` : ""}
+        ${val(r, "bunka") ? `<dt>文化財</dt><dd>${esc(val(r, "bunka"))}</dd>` : ""}
         ${s.year ? `<dt>宗派の成立</dt><dd>${s.year}年頃(${esc(s.founder)})</dd>` : ""}
       </dl>
       ${r[F.wp] ? `<div class="wp" id="wpText">Wikipediaの説明を読み込み中…</div>` : `<p class="src">この寺の詳しい歴史はまだデータに登録されていません。</p>`}
@@ -314,5 +353,5 @@
     }
   }
 
-  renderSects(); renderPyramid();
+  renderSects(); renderPyramid(); renderFlags();
 })();
