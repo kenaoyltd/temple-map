@@ -445,8 +445,8 @@ def build():
             match["qid"] = qid
         else:
             if REGION != "全国":
-                # 地域モードでは、県内のOSMの寺から2km以上離れたもの・説明文が他県を指すものを除く
-                if not any(dist_m(lat, lon, o["lat"], o["lon"]) < 2000 for o in grid.near(lat, lon, r=2)):
+                # 地域モードでは、県内のOSMの寺から5km以上離れたもの・説明文が他県を指すものを除く
+                if not any(dist_m(lat, lon, o["lat"], o["lon"]) < 5000 for o in grid.near(lat, lon, r=5)):
                     continue
                 art = it.get("article")
                 if art and outside_region((wp.get(wp_title_from_url(art)) or {}).get("text", "")):
@@ -471,7 +471,7 @@ def build():
             continue
         lat, lon = page["lat"], page["lon"]
         if REGION != "全国" and (outside_region(page.get("text", "")) or
-                                 not any(dist_m(lat, lon, o["lat"], o["lon"]) < 2000 for o in grid.near(lat, lon, r=2))):
+                                 not any(dist_m(lat, lon, o["lat"], o["lon"]) < 5000 for o in grid.near(lat, lon, r=5))):
             continue
         nn = norm_name(re.sub(r"\s*\(.*?\)$", "", page["title"]))
         best, best_d = None, 800
