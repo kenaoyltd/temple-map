@@ -7,10 +7,13 @@
 <meta name="description" content="全国の仏教寺院を宗派ごとに色分けし、寺格と創建の歴史とともに地図で見るサイト">
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="mobile.css">
 </head>
 <body>
 <div id="app">
   <aside id="panel">
+    <div class="panel-head">
+    <button id="sheetHandle" class="sheet-handle" aria-label="パネルの高さを切り替え"><span></span></button>
     <header class="brand">
       <div class="seal">寺</div>
       <div>
@@ -26,6 +29,7 @@
       <button class="tab" data-tab="rank">寺格</button>
       <button class="tab" data-tab="about">このサイト</button>
     </nav>
+    </div>
 
     <section class="pane active" id="pane-filter">
       <div class="search">
@@ -81,6 +85,10 @@
       <p id="aboutStats" class="muted small"></p>
       <p class="muted small">地図:国土地理院(地理院タイル)/ 寺院データ:© OpenStreetMap contributors (ODbL)、Wikidata (CC0)、Wikipedia (CC BY-SA)</p>
     </section>
+
+    <div class="sheet-foot">
+      <button id="showMap" class="show-map">地図を見る</button>
+    </div>
   </aside>
 
   <button id="panelOpen" class="panel-open" aria-label="パネルを開く">☰ 絞り込み</button>
@@ -89,5 +97,6 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="app.js"></script>
+<script src="mobile.js"></script>
 </body>
 </html>

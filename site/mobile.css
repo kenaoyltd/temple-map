@@ -1,0 +1,43 @@
+/* スマホ・狭い画面での絞り込みパネル(下から出るシート) */
+.sheet-handle, .sheet-foot { display: none; }
+
+@media (max-width: 760px) {
+  #panel {
+    z-index: 10;
+    height: 50vh; height: 50dvh; max-height: none;
+    padding: 0 16px; display: flex; flex-direction: column; overflow-y: auto;
+    transition: height .2s ease;
+  }
+  #panel.expanded { height: 88vh; height: 88dvh; }
+
+  /* 上部(ハンドル・タイトル・✕・タブ)はスクロールしても常に表示 */
+  .panel-head {
+    position: sticky; top: 0; z-index: 5; background: var(--paper);
+    margin: 0 -16px; padding: 0 16px;
+  }
+  .sheet-handle {
+    display: flex; justify-content: center; align-items: center; width: 100%; height: 22px;
+    border: 0; background: none; cursor: pointer; padding: 0;
+  }
+  .sheet-handle span { width: 44px; height: 5px; border-radius: 3px; background: var(--line); }
+  .brand { margin-bottom: 6px; gap: 10px; }
+  .seal { width: 32px; height: 32px; font-size: 18px; }
+  h1 { font-size: 17px; }
+  .icon-btn {
+    width: 36px; height: 36px; border-radius: 50%; background: var(--paper-2); font-size: 16px; color: var(--ink);
+  }
+  .tabs { margin: 0 -16px; }
+  .pane { padding-top: 10px; }
+
+  /* 下部の「地図を見る」ボタンも常に表示 */
+  .sheet-foot {
+    display: block; position: sticky; bottom: 0; z-index: 5; margin: auto -16px 0;
+    padding: 10px 16px 14px; background: linear-gradient(rgba(246,241,231,0), var(--paper) 30%);
+  }
+  .show-map {
+    width: 100%; padding: 12px; border: 0; border-radius: 10px; background: var(--accent); color: #fff;
+    font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.15);
+  }
+
+  .panel-open { font-size: 14px; padding: 10px 14px; }
+}
