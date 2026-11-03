@@ -334,6 +334,21 @@ def fetch_wikipedia():
 
 
 # ---------------------------------------------------------------- 統合
+PREFS = ("北海道 青森県 岩手県 宮城県 秋田県 山形県 福島県 茨城県 栃木県 群馬県 埼玉県 千葉県 東京都 神奈川県 新潟県 富山県 石川県 福井県 "
+         "山梨県 長野県 岐阜県 静岡県 愛知県 三重県 滋賀県 京都府 大阪府 兵庫県 奈良県 和歌山県 鳥取県 島根県 岡山県 広島県 山口県 "
+         "徳島県 香川県 愛媛県 高知県 福岡県 佐賀県 長崎県 熊本県 大分県 宮崎県 鹿児島県 沖縄県").split()
+
+
+def outside_region(text):
+    """地域モードで、説明文が別の都道府県を指していれば True"""
+    if REGION == "全国" or not text:
+        return False
+    head = text[:200]
+    if REGION in head or REGION.rstrip("都府県") in head[:60]:
+        return False
+    return any(p in head for p in PREFS if p != REGION)
+
+
 def dist_m(a_lat, a_lon, b_lat, b_lon):
     k = 111_320
     return math.hypot((a_lat - b_lat) * k, (a_lon - b_lon) * k * math.cos(math.radians(a_lat)))
@@ -430,8 +445,11 @@ def build():
             match["qid"] = qid
         else:
             if REGION != "全国":
-                # 地域モードでは、OSMの寺から5km以上離れたもの(県外の可能性)を除く
-                if not any(dist_m(lat, lon, o["lat"], o["lon"]) < 5000 for o in grid.near(lat, lon, r=5)):
+                # 地域モードでは、県内のOSMの寺から2km以上離れたもの・説明文が他県を指すものを除く
+                if not any(dist_m(lat, lon, o["lat"], o["lon"]) < 2000 for o in grid.near(lat, lon, r=2)):
+                    continue
+                art = it.get("article")
+                if art and outside_region((wp.get(wp_title_from_url(art)) or {}).get("text", "")):
                     continue
             t = make(lat, lon, it.get("label", ""), {}, qid, "")
             temples.append(t)
@@ -452,7 +470,8 @@ def build():
         if C.is_defunct(page.get("text", "")):
             continue
         lat, lon = page["lat"], page["lon"]
-        if REGION != "全国" and not any(dist_m(lat, lon, o["lat"], o["lon"]) < 5000 for o in grid.near(lat, lon, r=5)):
+        if REGION != "全国" and (outside_region(page.get("text", "")) or
+                                 not any(dist_m(lat, lon, o["lat"], o["lon"]) < 2000 for o in grid.near(lat, lon, r=2))):
             continue
         nn = norm_name(re.sub(r"\s*\(.*?\)$", "", page["title"]))
         best, best_d = None, 800
