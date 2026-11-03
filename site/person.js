@@ -7,7 +7,20 @@
     { k: "shrine", label: "神社", tpl: "神社", color: "#d97706" },
     { k: "castle", label: "城", tpl: "日本の城郭概要表", color: "#3f4a5a" },
   ];
-  const STRONG = /墓所|墓|菩提寺|菩提|霊廟|廟所|廟|位牌|葬|開基|開山|建立|創建|発願|創始|生誕|誕生|生まれ|出生|祀|祭神|築城|居城|最期|自害|没/;
+  const STRONG = /墓所|墓|菩提寺|菩提|霊廟|廟|位牌|葬|開基|建立|創建|発願|生誕|誕生|生まれ|出生|祀|祭神|築城|居城|最期|自害|冥福/;
+  // 人物名の前後20字以内に「墓所・菩提寺・開基…」などの言葉があるかで判定する
+  const isStrong = (html) => {
+    const plain = html.replace(/<span class="searchmatch">/g, "\u0001").replace(/<\/span>/g, "\u0002").replace(/<[^>]+>/g, "");
+    let m; const re = /\u0001([^\u0002]*)\u0002/g;
+    while ((m = re.exec(plain))) {
+      const end = m.index + m[0].length;
+      const s0 = plain.lastIndexOf("。", m.index) + 1;            // 同じ文(「。」で区切る)の中だけを見る
+      let s1 = plain.indexOf("。", end); if (s1 < 0) s1 = plain.length;
+      const win = plain.slice(Math.max(s0, m.index - 20), Math.min(s1, end + 20)).replace(/[\u0001\u0002]/g, "");
+      if (STRONG.test(win)) return true;
+    }
+    return false;
+  };
   const api = (q) => fetch(`${WP}?${new URLSearchParams({ ...q, format: "json", formatversion: 2, origin: "*" })}`).then((r) => r.json());
 
   const start = () => {
@@ -127,9 +140,8 @@
             const j = await api({ action: "query", list: "search", srsearch: `linksto:"${title}" hastemplate:"${t.tpl}" ${term}`.trim(), srlimit: 500, srprop: "snippet", srnamespace: 0 });
             for (const h of j.query?.search || []) {
               if (seen.has(h.title)) continue;
-              const text = h.snippet.replace(/<[^>]+>/g, "");
-              seen.set(h.title, { title: h.title, type: t.k, snippet: term ? h.snippet.replace(/<(?!\/?span[ >])[^>]*>/g, "") : "",
-                strong: !!term && STRONG.test(text) });
+              seen.set(h.title, { title: h.title, type: t.k, rank: seen.size, snippet: term ? h.snippet.replace(/<(?!\/?span[ >])[^>]*>/g, "") : "",
+                strong: !!term && isStrong(h.snippet) });
             }
           }
         }
@@ -144,7 +156,7 @@
           }
         }
         results.forEach((r) => { if (r.lat === undefined) r.lat = null; });
-        results.sort((a, b) => (b.strong - a.strong) || ((a.lat == null) - (b.lat == null)) || a.title.localeCompare(b.title, "ja"));
+        results.sort((a, b) => (b.strong - a.strong) || ((a.lat == null) - (b.lat == null)) || (a.rank - b.rank));
         const shown = draw();
         const cnt = (k) => results.filter((r) => r.type === k).length;
         st.innerHTML = `「${esc(title)}」ゆかりの場所:${TYPES.map((t) => `${t.label} ${fmt(cnt(t.k))}`).join("・")}(うち「ゆかり深い」${fmt(results.filter((r) => r.strong).length)})。` +
