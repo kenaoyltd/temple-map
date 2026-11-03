@@ -279,6 +279,27 @@ def fetch_ranked():
     save("ranked.json", titles)
 
 
+def fetch_muju():
+    """Wikipedia で「無住」の記述がある寺院記事を探す"""
+    if fresh("muju.json"):
+        log("無住の記述: 既存データを使用")
+        return
+    titles, offset = [], 0
+    while offset is not None and offset < 3000:
+        try:
+            j = S.get(JAWP_API, params={"action": "query", "list": "search", "srnamespace": 0, "srlimit": 500,
+                                        "srsearch": 'hastemplate:"日本の寺院" insource:"無住"', "sroffset": offset,
+                                        "srprop": "", "format": "json", "formatversion": 2, "maxlag": 5}, timeout=60).json()
+        except Exception as e:  # noqa: BLE001
+            log("  検索エラー:", e)
+            break
+        titles += [x["title"] for x in j.get("query", {}).get("search", [])]
+        offset = j.get("continue", {}).get("sroffset")
+        time.sleep(1)
+    log(f"無住の記述がある寺院記事: {len(titles)} 件")
+    save("muju.json", sorted(set(titles)))
+
+
 def fetch_wikipedia():
     if fresh("wikipedia2.json"):
         log("Wikipedia: 既存データを使用")
@@ -387,6 +408,7 @@ def build():
     wd = {it["qid"]: it for it in (load("wikidata.json") or [])}
     wp = load("wikipedia2.json") or {}
     ranked = load("ranked.json") or []
+    muju = set(load("muju.json") or [])
     sects = json.loads((ROOT / "data" / "sects.json").read_text(encoding="utf-8"))
     heads = json.loads((ROOT / "data" / "head_temples.json").read_text(encoding="utf-8"))["temples"]
     sect_keys = [s["key"] for s in sects["sects"]]
@@ -595,6 +617,24 @@ def build():
         sango = ib.get("山号", "")
         chuko = ib.get("中興", "")
 
+        # 無住:Wikipedia に記述あり / OSM の説明に記述あり
+        if title in muju or re.search(r"無住", " ".join(tags.get(k, "") for k in ("description", "note", "description:ja"))):
+            flags.append("無住")
+        # 電話・公式サイト・所在地
+        tel = tags.get("phone") or tags.get("contact:phone") or ""
+        web = tags.get("website") or tags.get("contact:website") or tags.get("url") or ""
+        if not web:
+            m = re.search(r"https?://[^\s|\]}<]+", C.parse_infobox(ex.get("wikitext", "")).get("公式HP", ""))
+            web = m.group(0) if m else ""
+        addr = ib.get("所在地", "")
+        if not addr:
+            addr = "".join(tags.get(k, "") for k in ("addr:province", "addr:city", "addr:county", "addr:quarter",
+                                                       "addr:suburb", "addr:neighbourhood", "addr:block_number",
+                                                       "addr:housenumber")) or tags.get("addr:full", "")
+        if not addr and text:
+            m = re.search(r"((?:" + "|".join(PREFS) + r")[^、。にの]{1,14}?(?:市|郡[^、。]{1,6}?[町村]|町|村|区))", text[:120])
+            addr = m.group(1) if m else ""
+
         h = head_for.get(id(t))
         if h:
             sect, branch, tier = h["sect"], h["branch"], h["tier"]
@@ -622,6 +662,7 @@ def build():
             {"temple": 0, "hall": 1, "noname": 2}[kind], {"": 0, "wd": 1, "wp": 2, "list": 3, "ib": 4}[ysrc],
             ("|" + "|".join(flags) + "|") if flags else "", fuda[:60], bunka[:120], honzon[:40], sango[:20],
             chuko[:30], ytext, 1 if legend else 0,
+            tel[:20], web[:120], addr[:60],
         ])
 
     rows.sort(key=lambda r: (-r[4], r[2]))  # 寺格の低いものから描く(上位寺院が上に重なる)
@@ -630,7 +671,8 @@ def build():
         "region": REGION,
         "stats": stats,
         "fields": ["lon", "lat", "name", "sect", "tier", "year", "branch", "rank", "wp", "wd", "osm", "founder", "kind", "ysrc",
-                   "flags", "fuda", "bunka", "honzon", "sango", "chuko", "ytext", "legend"],
+                   "flags", "fuda", "bunka", "honzon", "sango", "chuko", "ytext", "legend",
+                   "tel", "web", "addr"],
         "rows": rows,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -648,6 +690,7 @@ def main():
         fetch_osm()
         fetch_wikidata()
         fetch_ranked()
+        fetch_muju()
         fetch_wikipedia()
     if cmd in ("all", "build"):
         build()
