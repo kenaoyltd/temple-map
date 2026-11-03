@@ -12,10 +12,11 @@
   const TIERS = meta.tiers;
   const F = Object.fromEntries(data.fields.map((f, i) => [f, i]));
   const rows = data.rows;
+  rows.forEach((r, i) => { r.__i = i; });
   const YSRC = ["", "Wikidata", "Wikipedia本文から推定", "主要寺院リスト", "Wikipedia情報欄"];
   const HAS = (k) => F[k] !== undefined;
   const val = (r, k) => (HAS(k) ? r[F[k]] : "");
-  const FLAGS = [["札所", "霊場の札所"], ["国宝", "国宝あり"], ["重文", "重要文化財あり"], ["指定文化財", "県・市町村指定文化財"], ["門跡・勅願", "門跡・勅願寺"]];
+  const FLAGS = [["札所", "霊場の札所"], ["国宝", "国宝あり"], ["重文", "重要文化財あり"], ["指定文化財", "県・市町村指定文化財"], ["門跡・勅願", "門跡・勅願寺"], ["無住", "無住の記述あり"]];
 
   // ---------------- 状態
   const state = {
@@ -26,6 +27,7 @@
     halls: true,
     noname: false,
     flags: new Set(),
+    kw: null,
   };
 
   // ---------------- 集計
@@ -136,6 +138,7 @@
     const k = r[F.kind];
     if (k === 1 && !state.halls) return false;
     if (k === 2 && !state.noname) return false;
+    if (state.kw && !state.kw.has(r.__i)) return false;
     if (state.flags.size) { const fl = val(r, "flags") || ""; if (![...state.flags].some((f) => fl.includes("|" + f + "|"))) return false; }
     return true;
   }
@@ -150,6 +153,7 @@
       yearExpr,
       ["in", ["get", "k"], ["literal", kinds]],
     ];
+    if (state.kw) filter.push(["in", ["get", "i"], ["literal", [...state.kw]]]);
     if (state.flags.size) filter.push(["any", ...[...state.flags].map((f) => ["in", "|" + f + "|", ["get", "fl"]])]);
     if (map.getLayer("temples")) {
       map.setFilter("temples", filter);
@@ -297,6 +301,72 @@
     if (window.innerWidth <= 760) $("#panel").classList.add("closed");
   }
 
+  // ---------------- 歴史(Wikipedia の節)と国立国会図書館の資料
+  const WP = "https://ja.wikipedia.org/w/api.php";
+  const HIST_RE = /歴史|沿革|由緒|由来|縁起|伝説|伝承|逸話|話|エピソード|創建|開山|ゆかり|縁/;
+  const SKIP_RE = /脚注|注釈|出典|参考|関連|外部|交通|アクセス|所在地|周辺|境内|文化財|画像|ギャラリー|行事|年中/;
+  const htmlToText = (html) => {
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    div.querySelectorAll("sup, .mw-editsection, table, style, .reflist, .mw-references-wrap, figure, .thumb, .gallery, .noprint").forEach((n) => n.remove());
+    return [...div.querySelectorAll("p, li")].map((n) => n.textContent.trim()).filter(Boolean).join("\n");
+  };
+  async function loadHistory(title) {
+    const u = (q) => `${WP}?${new URLSearchParams({ ...q, format: "json", formatversion: 2, origin: "*" })}`;
+    const sec = await fetch(u({ action: "parse", page: title, prop: "sections", redirects: 1 })).then((x) => x.json());
+    const picks = (sec.parse?.sections || []).filter((x) => x.toclevel <= 2 && HIST_RE.test(x.line) && !SKIP_RE.test(x.line)).slice(0, 4);
+    if (!picks.length) return `<p class="src">この記事には歴史・伝説の節がありません。<a href="https://ja.wikipedia.org/wiki/${encodeURIComponent(title)}" target="_blank" rel="noopener">記事を開く</a></p>`;
+    const parts = await Promise.all(picks.map((x) => fetch(u({ action: "parse", page: title, section: x.index, prop: "text", redirects: 1, disabletoc: 1 }))
+      .then((y) => y.json()).then((j) => [x.line.replace(/<[^>]+>/g, ""), htmlToText(j.parse?.text || "")])));
+    const anchor = `https://ja.wikipedia.org/wiki/${encodeURIComponent(title)}`;
+    return parts.filter(([, t]) => t).map(([h, t]) => `<h4>${esc(h)}</h4><p class="hist">${esc(t.length > 900 ? t.slice(0, 900) + "…" : t).replace(/\n/g, "<br>")}</p>`).join("") +
+      `<p class="src">出典:<a href="${anchor}" target="_blank" rel="noopener">Wikipedia「${esc(title)}」</a>(CC BY-SA 4.0)。全文は記事でご覧ください。</p>`;
+  }
+  async function loadNdl(name, addr) {
+    const city = ((addr || "").match(/(?:都|道|府|県)?([^都道府県]{1,6}?(?:市|町|村|区))/) || [])[1] || "";
+    const tryQ = async (q) => {
+      const x = await fetch(`https://ndlsearch.ndl.go.jp/api/opensearch?any=${encodeURIComponent(q)}&cnt=12`).then((y) => y.text());
+      const doc = new DOMParser().parseFromString(x, "text/xml");
+      return { q, total: +(doc.getElementsByTagName("openSearch:totalResults")[0]?.textContent || 0), items: [...doc.getElementsByTagName("item")] };
+    };
+    let res = city ? await tryQ(`${name} ${city}`) : null;
+    if (!res || res.total === 0) res = await tryQ(name);
+    const g = (it, tag) => it.getElementsByTagName(tag)[0]?.textContent || "";
+    const more = `https://ndlsearch.ndl.go.jp/search?cs=bib&keyword=${encodeURIComponent(res.q)}`;
+    if (!res.items.length) return `<p class="src">見つかりませんでした。</p>`;
+    return `<ul class="ndl">${res.items.map((it) => `<li><a href="${esc(g(it, "link"))}" target="_blank" rel="noopener">${esc(g(it, "title"))}</a>` +
+      `<span class="src">${esc([g(it, "dc:publisher"), g(it, "dcterms:issued")].filter(Boolean).join("・"))}</span></li>`).join("")}</ul>` +
+      `<p class="src">「${esc(res.q)}」の検索結果 ${fmt(res.total)} 件(国立国会図書館サーチ)。同名の別の寺の資料が混ざることがあります。<a href="${more}" target="_blank" rel="noopener">すべて見る</a></p>`;
+  }
+
+  // ---------------- 人物・伝説・キーワードで探す
+  const titleToIdx = new Map();
+  rows.forEach((r, i) => { if (r[F.wp]) { const a = titleToIdx.get(r[F.wp]) || []; a.push(i); titleToIdx.set(r[F.wp], a); } });
+  const kwBlock = document.createElement("div");
+  kwBlock.className = "kw";
+  kwBlock.innerHTML = `<form id="kwForm"><input id="kw" type="search" placeholder="人物・伝説で探す(例:新田義貞、狸、上杉謙信)" autocomplete="off"><button>探す</button></form><div id="kwStatus" class="muted small"></div><ul id="kwResults"></ul>`;
+  $(".search").after(kwBlock);
+  $("#kwForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const q = $("#kw").value.trim();
+    if (!q) { state.kw = null; $("#kwStatus").textContent = ""; $("#kwResults").innerHTML = ""; applyFilter(); return; }
+    $("#kwStatus").textContent = "Wikipediaを検索中…";
+    try {
+      const p = new URLSearchParams({ action: "query", list: "search", srsearch: `hastemplate:"日本の寺院" "${q}"`, srlimit: 500, srprop: "snippet", format: "json", formatversion: 2, origin: "*" });
+      const j = await fetch(`${WP}?${p}`).then((x) => x.json());
+      const hits = (j.query?.search || []).filter((h) => titleToIdx.has(h.title));
+      state.kw = new Set(hits.flatMap((h) => titleToIdx.get(h.title)));
+      $("#kwStatus").innerHTML = `「${esc(q)}」が記事に出てくる寺:この地図に ${fmt(state.kw.size)} 件(全国の記事では ${fmt(j.query?.searchinfo?.totalhits || 0)} 件) <a href="#" id="kwClear">解除</a>`;
+      $("#kwResults").innerHTML = hits.slice(0, 40).map((h) => `<li data-idx="${titleToIdx.get(h.title)[0]}"><b>${esc(h.title)}</b><span class="snip">${h.snippet.replace(/<(?!\/?span[ >])[^>]*>/g, "")}</span></li>`).join("");
+      $("#kwClear").onclick = (ev) => { ev.preventDefault(); $("#kw").value = ""; $("#kwForm").requestSubmit(); };
+      applyFilter();
+    } catch (err) { $("#kwStatus").textContent = "検索できませんでした。"; }
+  });
+  $("#kwResults").addEventListener("click", (e) => { const li = e.target.closest("li[data-idx]"); if (li) flyTo(+li.dataset.idx); });
+  const kwCss = document.createElement("style");
+  kwCss.textContent = `.kw{margin-top:8px}.kw form{display:flex;gap:6px}.kw input{flex:1;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fffdf8;font:inherit;font-size:13px}.kw button{border:0;border-radius:6px;background:var(--accent);color:#fff;padding:0 12px;font:inherit;font-size:13px;cursor:pointer}#kwStatus{margin-top:4px}#kwResults{list-style:none;margin:4px 0 0;padding:0;max-height:240px;overflow:auto}#kwResults li{padding:6px 4px;border-bottom:1px dashed var(--line);cursor:pointer;font-size:12.5px}#kwResults li:hover{background:var(--paper-2)}#kwResults .snip{display:block;color:var(--ink-2);font-size:11.5px;line-height:1.5}#kwResults .searchmatch{background:#f3e7c0;color:var(--ink)}.pop{max-height:62vh;overflow-y:auto}.pop details.more{border-top:1px dashed var(--line);padding:6px 0}.pop details.more summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--accent)}.pop .more-body{font-size:12.5px;line-height:1.7;margin-top:6px}.pop .more-body h4{font-size:13px;margin:8px 0 2px;font-family:var(--font)}.pop .hist{margin:0}.pop ul.ndl{margin:0;padding-left:18px}.pop ul.ndl li{margin-bottom:4px}.pop ul.ndl .src{display:block}`;
+  document.head.appendChild(kwCss);
+
   // ---------------- 詳細ポップアップ
   let popup = null;
   function openPopup(i) {
@@ -333,13 +403,27 @@
         ${val(r, "chuko") ? `<dt>中興</dt><dd>${esc(val(r, "chuko"))}</dd>` : ""}
         ${val(r, "fuda") ? `<dt>札所</dt><dd>${esc(val(r, "fuda"))}</dd>` : ""}
         ${val(r, "bunka") ? `<dt>文化財</dt><dd>${esc(val(r, "bunka"))}</dd>` : ""}
+        ${val(r, "addr") ? `<dt>所在地</dt><dd>${esc(val(r, "addr"))}</dd>` : ""}
+        ${val(r, "tel") ? `<dt>電話</dt><dd><a href="tel:${esc(val(r, "tel").replace(/[^0-9+]/g, ""))}">${esc(val(r, "tel"))}</a></dd>` : ""}
+        ${val(r, "web") ? `<dt>公式サイト</dt><dd><a href="${esc(val(r, "web"))}" target="_blank" rel="noopener">${esc(val(r, "web").replace(/^https?:\/\//, "").slice(0, 40))}</a></dd>` : ""}
         ${s.year ? `<dt>宗派の成立</dt><dd>${s.year}年頃(${esc(s.founder)})</dd>` : ""}
       </dl>
       ${r[F.wp] ? `<div class="wp" id="wpText">Wikipediaの説明を読み込み中…</div>` : `<p class="src">この寺の詳しい歴史はまだデータに登録されていません。</p>`}
+      ${r[F.wp] ? `<details class="more" data-kind="hist"><summary>歴史・由来・伝説(Wikipedia)</summary><div class="more-body">読み込み中…</div></details>` : ""}
+      ${name && r[F.kind] !== 2 ? `<details class="more" data-kind="ndl"><summary>国立国会図書館の関連資料</summary><div class="more-body">読み込み中…</div></details>` : ""}
+      ${flags.includes("無住") ? `<p class="src">※「無住」はWikipedia等に記述があることを示す目安です。過去の時期の記述の場合もあります。</p>` : ""}
       <div class="plinks">${links.join("")}</div>
     </div>`;
     if (popup) popup.remove();
-    popup = new maplibregl.Popup({ maxWidth: "360px", offset: 10 }).setLngLat([r[F.lon], r[F.lat]]).setHTML(html).addTo(map);
+    popup = new maplibregl.Popup({ maxWidth: "380px", offset: 10 }).setLngLat([r[F.lon], r[F.lat]]).setHTML(html).addTo(map);
+    popup.getElement().querySelectorAll("details.more").forEach((d) => d.addEventListener("toggle", () => {
+      if (!d.open || d.dataset.loaded) return;
+      d.dataset.loaded = "1";
+      const body = d.querySelector(".more-body");
+      (d.dataset.kind === "hist" ? loadHistory(r[F.wp]) : loadNdl(name, val(r, "addr")))
+        .then((h) => { body.innerHTML = h; })
+        .catch(() => { body.textContent = "読み込めませんでした。時間をおいて開き直してください。"; });
+    }));
     if (r[F.wp]) {
       fetch(`https://ja.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(r[F.wp].replace(/ /g, "_"))}`)
         .then((res) => (res.ok ? res.json() : Promise.reject()))
