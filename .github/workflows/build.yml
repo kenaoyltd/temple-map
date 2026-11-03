@@ -1,0 +1,84 @@
+name: 寺院マップを作成・公開
+
+on:
+  # 手動実行(Actions 画面の「Run workflow」ボタン)
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "対象地域(空欄なら region.txt の値。例: 群馬県 / 全国)"
+        required: false
+        default: ""
+  # 毎月2日 午前3時(日本時間)にデータを取り直す
+  schedule:
+    - cron: "17 18 1 * *"
+  # サイトのファイルを変えたときは、保存済みデータで作り直すだけ(取り直さない)
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 設定を読む
+        id: cfg
+        run: |
+          REGION="${{ github.event.inputs.region }}"
+          if [ -z "$REGION" ]; then REGION="$(head -n1 region.txt | tr -d '\r' | xargs)"; fi
+          if [ -z "$REGION" ]; then REGION="全国"; fi
+          echo "region=$REGION" >> "$GITHUB_OUTPUT"
+          echo "key=$(printf '%s' "$REGION" | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          if [ "${{ github.event_name }}" = "push" ]; then echo "refresh=0" >> "$GITHUB_OUTPUT"; else echo "refresh=1" >> "$GITHUB_OUTPUT"; fi
+          echo "対象地域: $REGION"
+
+      - name: 前回取得したデータを復元
+        uses: actions/cache/restore@v4
+        with:
+          path: raw
+          key: raw-${{ steps.cfg.outputs.key }}-${{ github.run_id }}
+          restore-keys: raw-${{ steps.cfg.outputs.key }}-
+
+      - name: データ取得と統合
+        env:
+          REGION: ${{ steps.cfg.outputs.region }}
+          REFRESH: ${{ steps.cfg.outputs.refresh }}
+        run: |
+          pip install requests
+          python scripts/pipeline.py all
+
+      - name: 取得したデータを保存(次回の再利用用)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: raw
+          key: raw-${{ steps.cfg.outputs.key }}-${{ github.run_id }}
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
