@@ -243,11 +243,47 @@ def wp_title_from_url(u):
     return unquote(u.rsplit("/wiki/", 1)[-1]).replace("_", " ")
 
 
+def fetch_ranked():
+    """Wikipedia で「寺格」に本山・門跡などが書かれている寺院記事を全国から探す"""
+    if fresh("ranked.json"):
+        log("寺格のある寺院: 既存データを使用")
+        return
+    queries = [
+        'hastemplate:"日本の寺院" insource:/寺格 *= *[^|\\n]*(本山|門跡|本寺|勅願|別院|由緒)/',
+        'hastemplate:"日本の寺院" insource:"寺格" 本山',
+    ]
+    titles = []
+    for q in queries:
+        offset = 0
+        ok = False
+        while offset is not None and offset < 5000:
+            try:
+                r = S.get(JAWP_API, params={"action": "query", "list": "search", "srsearch": q, "srnamespace": 0,
+                                            "srlimit": 500, "sroffset": offset, "srprop": "", "format": "json",
+                                            "formatversion": 2, "maxlag": 5}, timeout=60)
+                j = r.json()
+            except Exception as e:  # noqa: BLE001
+                log("  検索エラー:", e)
+                break
+            if "error" in j:
+                log("  検索エラー:", j["error"].get("info", ""))
+                break
+            ok = True
+            titles += [x["title"] for x in j.get("query", {}).get("search", [])]
+            offset = j.get("continue", {}).get("sroffset")
+            time.sleep(1)
+        if ok and titles:
+            break
+    titles = sorted(set(titles))
+    log(f"寺格のある寺院記事: {len(titles)} 件")
+    save("ranked.json", titles)
+
+
 def fetch_wikipedia():
-    if fresh("wikipedia.json"):
+    if fresh("wikipedia2.json"):
         log("Wikipedia: 既存データを使用")
         return
-    titles = set()
+    titles = set(load("ranked.json") or [])
     for it in load("wikidata.json") or []:
         if it.get("article"):
             titles.add(wp_title_from_url(it["article"]))
@@ -255,33 +291,46 @@ def fetch_wikipedia():
         wp = el.get("tags", {}).get("wikipedia", "")
         if wp.startswith("ja:"):
             titles.add(wp[3:].replace("_", " "))
+    heads = json.loads((ROOT / "data" / "head_temples.json").read_text(encoding="utf-8"))["temples"]
+    for h in heads:
+        titles.add(h.get("wp") or h["name"])
     titles = sorted(titles)
-    log(f"Wikipedia: {len(titles)} 記事の冒頭を取得")
-    extracts = {}
+    log(f"Wikipedia: {len(titles)} 記事の冒頭と情報欄を取得")
+    pages = {}
     for i in range(0, len(titles), 20):
         batch = titles[i:i + 20]
         for attempt in range(3):
             try:
-                r = S.get(JAWP_API, params={"action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
-                                            "exlimit": 20, "redirects": 1, "titles": "|".join(batch),
+                r = S.get(JAWP_API, params={"action": "query", "prop": "extracts|revisions|coordinates",
+                                            "exintro": 1, "explaintext": 1, "exlimit": 20,
+                                            "rvprop": "content", "rvslots": "main", "rvsection": 0,
+                                            "redirects": 1, "titles": "|".join(batch),
                                             "format": "json", "formatversion": 2, "maxlag": 5}, timeout=60)
                 q = r.json().get("query", {})
-                redirect_map = {x["to"]: x["from"] for x in q.get("redirects", [])}
-                norm_map = {x["to"]: x["from"] for x in q.get("normalized", [])}
+                back = {}
+                for x in q.get("normalized", []):
+                    back[x["to"]] = x["from"]
+                for x in q.get("redirects", []):
+                    back[x["to"]] = back.get(x["from"], x["from"])
                 for p in q.get("pages", []):
                     t = p.get("title", "")
-                    ex = (p.get("extract") or "")[:700]
-                    src = redirect_map.get(t, t)
-                    src = norm_map.get(src, src)
-                    extracts[src] = {"title": t, "text": ex}
-                    extracts[t] = {"title": t, "text": ex}
+                    if p.get("missing"):
+                        continue
+                    revs = p.get("revisions") or [{}]
+                    wt = revs[0].get("slots", {}).get("main", {}).get("content", "")
+                    co = (p.get("coordinates") or [{}])[0]
+                    rec = {"title": t, "text": (p.get("extract") or "")[:700], "wikitext": wt[:6000],
+                           "lat": co.get("lat"), "lon": co.get("lon")}
+                    pages[t] = rec
+                    if t in back:
+                        pages[back[t]] = rec
                 break
             except Exception:  # noqa: BLE001
                 time.sleep(5)
         if (i // 20) % 50 == 0:
             log(f"  {min(i + 20, len(titles))}/{len(titles)}")
         time.sleep(0.3)
-    save("wikipedia.json", extracts)
+    save("wikipedia2.json", pages)
 
 
 # ---------------------------------------------------------------- 統合
@@ -321,7 +370,8 @@ class Grid:
 def build():
     osm = load("osm.json") or []
     wd = {it["qid"]: it for it in (load("wikidata.json") or [])}
-    wp = load("wikipedia.json") or {}
+    wp = load("wikipedia2.json") or {}
+    ranked = load("ranked.json") or []
     sects = json.loads((ROOT / "data" / "sects.json").read_text(encoding="utf-8"))
     heads = json.loads((ROOT / "data" / "head_temples.json").read_text(encoding="utf-8"))["temples"]
     sect_keys = [s["key"] for s in sects["sects"]]
@@ -388,6 +438,39 @@ def build():
             grid.add(lat, lon, t)
         used_qids.add(qid)
 
+    # 2b) 寺格のある寺院記事(全国検索の結果)を結びつける。無ければ新規の点として追加
+    title_used = set()
+    for t in temples:
+        if t["qid"] and wd.get(t["qid"], {}).get("article"):
+            title_used.add(wp_title_from_url(wd[t["qid"]]["article"]))
+        elif t["tags"].get("wikipedia", "").startswith("ja:"):
+            title_used.add(t["tags"]["wikipedia"][3:].replace("_", " "))
+    for title in ranked:
+        page = wp.get(title)
+        if not page or page.get("lat") is None or page["title"] in title_used or title in title_used:
+            continue
+        if C.is_defunct(page.get("text", "")):
+            continue
+        lat, lon = page["lat"], page["lon"]
+        if REGION != "全国" and not any(dist_m(lat, lon, o["lat"], o["lon"]) < 5000 for o in grid.near(lat, lon, r=5)):
+            continue
+        nn = norm_name(re.sub(r"\s*\(.*?\)$", "", page["title"]))
+        best, best_d = None, 800
+        for o in grid.near(lat, lon, r=1):
+            on = norm_name(o["name"])
+            if on and nn and (on == nn or on in nn or nn in on):
+                d = dist_m(lat, lon, o["lat"], o["lon"])
+                if d < best_d and not o.get("wp"):
+                    best, best_d = o, d
+        if best:
+            best["wp"] = page["title"]
+        else:
+            t = make(lat, lon, re.sub(r"\s*\(.*?\)$", "", page["title"]), {}, "", "")
+            t["wp"] = page["title"]
+            temples.append(t)
+            grid.add(lat, lon, t)
+        title_used.add(page["title"])
+
     # 3) 総本山リストとの照合
     head_for = {}
     for h in heads:
@@ -414,8 +497,10 @@ def build():
     for t in temples:
         tags = t["tags"]
         it = wd.get(t["qid"], {}) if t["qid"] else {}
-        title = ""
-        if it.get("article"):
+        title = t.get("wp", "")
+        if title:
+            pass
+        elif it.get("article"):
             title = wp_title_from_url(it["article"])
         elif tags.get("wikipedia", "").startswith("ja:"):
             title = tags["wikipedia"][3:].replace("_", " ")
@@ -424,63 +509,100 @@ def build():
         if ex.get("title"):
             title = ex["title"]
 
+        ib = {k: C.clean_wiki(v) for k, v in C.parse_infobox(ex.get("wikitext", "")).items()}
+
         sect, branch = None, ""
-        # (a) OSM の日本語宗派タグ
-        for k in ("denomination:ja", "sect", "denomination:jp", "religion:ja", "operator"):
-            v = tags.get(k, "")
-            s = C.sect_from_ja(v)
-            if s:
-                sect, branch = s, v if re.search(r"(宗|派)$", v) else branch
+        # (0) Wikipedia 情報欄の「宗派」「宗旨」(最も確か)
+        for k in ("宗派", "宗旨"):
+            v = ib.get(k, "")
+            s0 = C.sect_from_ja(v)
+            if s0:
+                sect, branch = s0, (ib.get("宗派") or v)[:24]
                 break
+        # (a) OSM の日本語宗派タグ
+        if not sect:
+            for k in ("denomination:ja", "sect", "denomination:jp", "religion:ja", "operator"):
+                v = tags.get(k, "")
+                s1 = C.sect_from_ja(v)
+                if s1:
+                    sect, branch = s1, v if re.search(r"(宗|派)$", v) else branch
+                    break
         # (b) Wikipedia 冒頭文(「〇〇宗〇〇派の寺院」)
-        if text:
+        if text and not ib.get("宗派") and not ib.get("宗旨"):
             s2, b2 = C.sect_from_text(text)
             if s2 and (not sect or b2):
                 sect, branch = s2, b2 or branch
         # (c) Wikidata の「宗教」
         if not sect:
             for rl in it.get("religion", []):
-                s = C.sect_from_ja(rl)
-                if s:
-                    sect, branch = s, rl
+                s3 = C.sect_from_ja(rl)
+                if s3:
+                    sect, branch = s3, rl
                     break
         # (d) OSM の denomination(ローマ字)
         if not sect:
             sect = C.sect_from_romaji(tags.get("denomination", ""))
         sect = sect or "unknown"
 
-        tier, rank = C.rank_from_text(text)
-        year, ysrc = None, ""
-        for v in it.get("inception", []):
-            y = C.year_from_wikidata(v)
-            if y and (year is None or y < year):
-                year, ysrc = y, "wd"
+        # 寺格:情報欄の「寺格」→ 冒頭文
+        rank = ib.get("寺格", "")[:30]
+        tier = C.tier_from_rank(rank)
+        if not rank:
+            tier, rank = C.rank_from_text(text)
+
+        # 創建年:情報欄 → Wikidata → 冒頭文
+        year, ysrc, ytext, legend = None, "", "", False
+        if ib.get("創建年"):
+            ytext = ib["創建年"][:40]
+            y, legend = C.year_from_field(ytext)
+            if y:
+                year, ysrc = y, "ib"
+        if year is None:
+            for v in it.get("inception", []):
+                y = C.year_from_wikidata(v)
+                if y and (year is None or y < year):
+                    year, ysrc = y, "wd"
         if year is None:
             y = C.year_from_text(text)
             if y:
                 year, ysrc = y, "wp"
-        founder = "、".join(it.get("founder", [])[:2])
+        founder = "、".join(x for x in [ib.get("開山") and "開山 " + ib["開山"], ib.get("開基") and "開基 " + ib["開基"]] if x)
+        if not founder:
+            founder = "、".join(it.get("founder", [])[:2])
+        fuda = ib.get("札所等", "")
+        bunka = ib.get("文化財", "")
+        flags = C.flags_of(fuda, bunka, rank, text)
+        honzon = ib.get("本尊", "")
+        sango = ib.get("山号", "")
+        chuko = ib.get("中興", "")
 
         h = head_for.get(id(t))
         if h:
-            sect, branch, rank, tier = h["sect"], h["branch"], h["rank"], h["tier"]
-            if h.get("year"):
+            sect, branch, tier = h["sect"], h["branch"], h["tier"]
+            rank = rank if C.tier_from_rank(rank) == h["tier"] else h["rank"]
+            if h.get("year") and ysrc != "ib":
                 year, ysrc = h["year"], "list"
-            founder = h.get("founder") or founder
+            founder = founder or h.get("founder") or ""
             if not title:
                 title = h.get("wp") or h["name"]
+            if tier <= 3 and "門跡" in rank and "門跡・勅願" not in flags:
+                flags.append("門跡・勅願")
 
         name = t["name"] or (title if title else "")
         kind = C.kind_of(name)
         stats["total"] += 1
         stats["sect_known"] += sect != "unknown"
         stats["year_known"] += year is not None
+        stats["ranked"] = stats.get("ranked", 0) + (tier <= 3)
+        stats["flagged"] = stats.get("flagged", 0) + bool(flags)
         stats["wp"] += bool(title)
         rows.append([
             round(t["lon"], 5), round(t["lat"], 5), name,
             sect_keys.index(sect), tier, year if year else 0,
             branch[:24], rank, title, t["qid"], t["osm"], founder[:40],
-            {"temple": 0, "hall": 1, "noname": 2}[kind], {"": 0, "wd": 1, "wp": 2, "list": 3}[ysrc],
+            {"temple": 0, "hall": 1, "noname": 2}[kind], {"": 0, "wd": 1, "wp": 2, "list": 3, "ib": 4}[ysrc],
+            ("|" + "|".join(flags) + "|") if flags else "", fuda[:60], bunka[:120], honzon[:40], sango[:20],
+            chuko[:30], ytext, 1 if legend else 0,
         ])
 
     rows.sort(key=lambda r: (-r[4], r[2]))  # 寺格の低いものから描く(上位寺院が上に重なる)
@@ -488,13 +610,15 @@ def build():
         "generated": time.strftime("%Y-%m-%d"),
         "region": REGION,
         "stats": stats,
-        "fields": ["lon", "lat", "name", "sect", "tier", "year", "branch", "rank", "wp", "wd", "osm", "founder", "kind", "ysrc"],
+        "fields": ["lon", "lat", "name", "sect", "tier", "year", "branch", "rank", "wp", "wd", "osm", "founder", "kind", "ysrc",
+                   "flags", "fuda", "bunka", "honzon", "sango", "chuko", "ytext", "legend"],
         "rows": rows,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
     (OUT.parent / "sects.json").write_text((ROOT / "data" / "sects.json").read_text(encoding="utf-8"), encoding="utf-8")
-    log(f"完成: {stats['total']} 件(宗派判明 {stats['sect_known']} / 創建年判明 {stats['year_known']} / Wikipedia記事あり {stats['wp']})")
+    log(f"完成: {stats['total']} 件(宗派判明 {stats['sect_known']} / 創建年判明 {stats['year_known']} / Wikipedia記事あり {stats['wp']}"
+        f" / 寺格あり {stats.get('ranked', 0)} / 格式タグあり {stats.get('flagged', 0)})")
     log(f"出力: {OUT} ({OUT.stat().st_size / 1e6:.1f} MB)")
 
 
@@ -504,6 +628,7 @@ def main():
     if cmd in ("all", "fetch"):
         fetch_osm()
         fetch_wikidata()
+        fetch_ranked()
         fetch_wikipedia()
     if cmd in ("all", "build"):
         build()
