@@ -196,15 +196,16 @@ function findTemple(D, q0) {
   if (D.byId.has(q0)) return D.byId.get(q0);
   const q = norm(q0);
   if (!q) return null;
-  let hits = D.rows.filter((r) => norm(v(D, r, "name")) === q);
-  if (!hits.length) hits = D.rows.filter((r) => norm(v(D, r, "name")).includes(q));
-  hits.sort((a, b) => v(D, a, "tier") - v(D, b, "tier") || v(D, a, "kind") - v(D, b, "kind"));
-  if (hits.length) return hits[0];
-  // 通称(例: とげぬき地蔵)は体験・行事データの別名から探す
+  const sortHits = (hs) => hs.sort((a, b) => (v(D, b, "exp") || []).length - (v(D, a, "exp") || []).length
+    || v(D, a, "tier") - v(D, b, "tier") || v(D, a, "kind") - v(D, b, "kind"));
+  const exact = sortHits(D.rows.filter((r) => norm(v(D, r, "name")) === q));
+  if (exact.length) return exact[0];
+  // 通称(例: とげぬき地蔵)は、体験・行事データの別名から先に探す(体験情報つきの寺を優先)
   for (const it of D.exp.items) {
     if (D.byId.has(it.temple_id) && [it.temple, ...(it.aliases || [])].some((n) => norm(n).includes(q))) return D.byId.get(it.temple_id);
   }
-  return null;
+  const part = sortHits(D.rows.filter((r) => norm(v(D, r, "name")).includes(q)));
+  return part.length ? part[0] : null;
 }
 
 const TYPE_ERR = (w) => ({ error: `体験の種類「${w}」が分かりません。坐禅・写経・宿坊・精進料理・縁日・行事・体験のどれかで指定してください。` });
