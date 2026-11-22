@@ -1,2 +1,10 @@
 raw/
 __pycache__/
+# 自動で作られるファイル(GitHub Actions で毎回作り直す)
+site/data/
+site/t/
+site/p/
+site/experiences.html
+site/sitemap*.xml
+site/robots.txt
+site/llms.txt

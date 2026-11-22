@@ -1,0 +1,8 @@
+# Cloudflare Workers の設定(お寺マップ MCP サーバー)
+name = "temple-map-mcp"
+main = "src/index.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# データを読むサイト(GitHub Pages)。リポジトリ名やユーザー名を変えたらここも直す
+TEMPLE_SITE_URL = "https://kenaoyltd.github.io/temple-map/"

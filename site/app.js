@@ -8,6 +8,13 @@
     fetch("data/temples.json").then((r) => r.json()),
     fetch("data/sects.json").then((r) => r.json()),
   ]);
+  // 坐禅会・宿坊・縁日など(無くても動く)
+  const EXP = await fetch("data/experiences.json").then((r) => (r.ok ? r.json() : null)).catch(() => null);
+  const EXP_BY_ID = Object.fromEntries((EXP?.items || []).map((x) => [x.id, x]));
+  const WD_JA = { mon: "月", tue: "火", wed: "水", thu: "木", fri: "金", sat: "土", sun: "日" };
+  const schedText = (s) => !s ? "" : s.daily ? "通年" : s.weekly ? `毎週${s.weekly.map((w) => WD_JA[w]).join("・")}曜`
+    : s.monthly_days ? `毎月${s.monthly_days.join("・")}日` : s.monthly_nth ? "毎月" + s.monthly_nth.map((x) => `第${x.n}${WD_JA[x.weekday]}曜`).join("・")
+    : s.annual ? "毎年" + s.annual.map((a) => `${a.month}月${a.day}日` + ((a.days || 1) > 1 ? `〜${a.day + a.days - 1}日` : "")).join("・") : (s.text || "");
   const SECTS = meta.sects;
   const TIERS = meta.tiers;
   const F = Object.fromEntries(data.fields.map((f, i) => [f, i]));
@@ -16,7 +23,8 @@
   const YSRC = ["", "Wikidata", "Wikipedia本文から推定", "主要寺院リスト", "Wikipedia情報欄"];
   const HAS = (k) => F[k] !== undefined;
   const val = (r, k) => (HAS(k) ? r[F[k]] : "");
-  const FLAGS = [["札所", "霊場の札所"], ["国宝", "国宝あり"], ["重文", "重要文化財あり"], ["指定文化財", "県・市町村指定文化財"], ["門跡・勅願", "門跡・勅願寺"], ["無住", "無住の記述あり"]];
+  const FLAGS = [["札所", "霊場の札所"], ["国宝", "国宝あり"], ["重文", "重要文化財あり"], ["指定文化財", "県・市町村指定文化財"], ["門跡・勅願", "門跡・勅願寺"], ["無住", "無住の記述あり"],
+    ["坐禅", "坐禅会"], ["写経", "写経"], ["宿坊", "宿坊"], ["精進料理", "精進料理"], ["縁日・行事", "縁日・行事"], ["体験", "その他の体験"]];
 
   // ---------------- 状態
   const state = {
@@ -417,6 +425,8 @@
         ${val(r, "web") ? `<dt>公式サイト</dt><dd><a href="${esc(val(r, "web"))}" target="_blank" rel="noopener">${esc(val(r, "web").replace(/^https?:\/\//, "").slice(0, 40))}</a></dd>` : ""}
         ${s.year ? `<dt>宗派の成立</dt><dd>${s.year}年頃(${esc(s.founder)})</dd>` : ""}
       </dl>
+      ${expHtml(r)}
+      ${hasPage(r) ? `<p><a href="t/${encodeURIComponent(val(r, "id"))}.html">このお寺の詳しいページ →</a></p>` : ""}
       ${r[F.wp] ? `<div class="wp" id="wpText">Wikipediaの説明を読み込み中…</div>` : `<p class="src">この寺の詳しい歴史はまだデータに登録されていません。</p>`}
       ${r[F.wp] ? `<details class="more" data-kind="hist"><summary>歴史・由来・伝説(Wikipedia)</summary><div class="more-body">読み込み中…</div></details>` : ""}
       ${name && r[F.kind] !== 2 ? `<details class="more" data-kind="ndl"><summary>国立国会図書館の関連資料</summary><div class="more-body">読み込み中…</div></details>` : ""}
@@ -446,5 +456,26 @@
     }
   }
 
+  function hasPage(r) {
+    return HAS("id") && r[F.name] && r[F.kind] === 0 && !!(r[F.wp] || r[F.tier] <= 3 || val(r, "flags") || (val(r, "exp") || []).length || val(r, "honzon"));
+  }
+  function expHtml(r) {
+    const xs = (val(r, "exp") || []).map((id) => EXP_BY_ID[id]).filter(Boolean);
+    if (!xs.length) return "";
+    return `<div class="exp"><b>体験・行事</b><ul>${xs.map((x) => `<li><span class="tag flag">${esc(EXP.types[x.type] || x.type)}</span> ${esc(x.title)}`
+      + `<br><span class="src">${esc(schedText(x.schedule))}${x.time ? " / " + esc(x.time) : ""}${x.fee ? " / " + esc(x.fee) : ""}`
+      + `(${esc(x.checked || "")}確認・<a href="${esc((x.sources || [])[0] || "#")}" target="_blank" rel="noopener">出典</a>)</span></li>`).join("")}</ul></div>`;
+  }
+
   renderSects(); renderPyramid(); renderFlags();
+
+  // URL で寺を開く(?t=寺ID)・名前で検索(?q=名前)
+  const params = new URLSearchParams(location.search);
+  if (params.get("t") && HAS("id")) {
+    const r = rows.find((x) => x[F.id] === params.get("t"));
+    if (r) { const go = () => flyTo(r.__i); map.loaded() ? go() : map.once("load", go); }
+  } else if (params.get("q")) {
+    searchEl.value = params.get("q");
+    searchEl.dispatchEvent(new Event("input"));
+  }
 })();

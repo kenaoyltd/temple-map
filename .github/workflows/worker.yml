@@ -1,0 +1,31 @@
+name: MCPサーバーを公開(Cloudflare Workers)
+
+on:
+  # worker フォルダを変えたとき
+  push:
+    branches: [main]
+    paths: ["worker/**", ".github/workflows/worker.yml"]
+  # 手動実行(Actions 画面の「Run workflow」ボタン)
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      HAS_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 準備ができていない場合の案内
+        if: env.HAS_TOKEN != 'true'
+        run: |
+          echo "::warning::Cloudflare の鍵(CLOUDFLARE_API_TOKEN と CLOUDFLARE_ACCOUNT_ID)が未登録のため、MCPサーバーの公開をスキップしました。README の「AIエージェントから使う(MCP)」を見て登録してください。"
+
+      - name: Cloudflare Workers に公開
+        if: env.HAS_TOKEN == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: worker
