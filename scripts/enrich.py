@@ -76,6 +76,10 @@ def main():
     for it in exp["items"]:
         names = {norm_name(n) for n in [it["temple"], *it.get("aliases", [])]}
         cands = [r for n in names for r in by_name.get(n, [])]
+        if not cands:
+            # 「とげぬき地蔵尊 高岩寺」のように名前が長い場合は、部分一致で探す(距離は下で絞る)
+            cands = [r for key, rs in by_name.items() for r in rs
+                     if any(len(n) >= 2 and (n in key or key in n) for n in names)]
         cands = [(dist_m(it["lat"], it["lon"], r[F["lat"]], r[F["lon"]]), r) for r in cands]
         cands = [c for c in cands if c[0] <= RADIUS_M]
         if not cands:
