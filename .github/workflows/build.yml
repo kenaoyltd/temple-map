@@ -62,6 +62,8 @@ jobs:
           python scripts/pipeline.py all
           python scripts/population.py
           python scripts/persons.py
+          python scripts/enrich.py
+          python scripts/seo.py
 
       - name: 取得したデータを保存(次回の再利用用)
         if: always()

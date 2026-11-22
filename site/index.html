@@ -4,7 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>日本の寺院マップ — 宗派・寺格・歴史</title>
-<meta name="description" content="全国の仏教寺院を宗派ごとに色分けし、寺格と創建の歴史とともに地図で見るサイト">
+<meta name="description" content="全国の仏教寺院を宗派ごとに色分けし、寺格と創建の歴史、坐禅会・写経・宿坊・縁日の情報とともに地図で見るサイト">
+<link rel="canonical" href="__SITE_URL__">
+<meta property="og:type" content="website">
+<meta property="og:title" content="日本の寺院マップ — 宗派・寺格・歴史">
+<meta property="og:description" content="全国の仏教寺院を宗派ごとに色分けし、寺格と創建の歴史、坐禅会・写経・宿坊・縁日の情報とともに地図で見るサイト">
+<meta property="og:url" content="__SITE_URL__">
+<meta property="og:site_name" content="日本の寺院マップ">
+<meta property="og:locale" content="ja_JP">
+<link rel="sitemap" type="application/xml" href="sitemap.xml">
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@graph": [
+  {
+   "@type": "WebSite",
+   "@id": "__SITE_URL__#website",
+   "url": "__SITE_URL__",
+   "name": "日本の寺院マップ",
+   "inLanguage": "ja",
+   "description": "全国の仏教寺院を宗派・寺格・創建年・坐禅会や宿坊・縁日などの情報とともに地図で見るサイト",
+   "potentialAction": {
+    "@type": "SearchAction",
+    "target": {"@type": "EntryPoint", "urlTemplate": "__SITE_URL__?q={search_term_string}"},
+    "query-input": "required name=search_term_string"
+   }
+  },
+  {
+   "@type": "Dataset",
+   "@id": "__SITE_URL__#dataset",
+   "name": "日本の仏教寺院データ(__REGION__)",
+   "description": "仏教寺院の位置・名前・宗派・寺格・創建年・本尊・文化財と、坐禅会・写経・宿坊・縁日などの体験・行事の情報。OpenStreetMap、Wikidata、Wikipedia と手入力の情報を統合したもの。",
+   "url": "__SITE_URL__",
+   "inLanguage": "ja",
+   "dateModified": "__GENERATED__",
+   "spatialCoverage": {"@type": "Place", "name": "__REGION__(日本)"},
+   "isAccessibleForFree": true,
+   "license": "https://opendatacommons.org/licenses/odbl/1-0/",
+   "creditText": "© OpenStreetMap contributors (ODbL), Wikidata (CC0), Wikipedia (CC BY-SA)",
+   "distribution": [
+    {"@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": "__SITE_URL__data/temples.json"},
+    {"@type": "DataDownload", "encodingFormat": "application/json", "contentUrl": "__SITE_URL__data/experiences.json"}
+   ]
+  }
+ ]
+}
+</script>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css">
 <link rel="stylesheet" href="mobile.css">
@@ -86,6 +131,13 @@
       <p>寺の位置・名前・宗派は <a href="https://www.openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap</a>、創建年・開山・寺の説明は <a href="https://www.wikidata.org/" target="_blank" rel="noopener">Wikidata</a> と <a href="https://ja.wikipedia.org/" target="_blank" rel="noopener">Wikipedia</a> から自動で集めています。主要な総本山・大本山は手入力のリストで補っています。</p>
       <p>宗派や寺格が登録されていない寺は「宗派不明」「一般寺院」として表示されます。創建年の「推定」はWikipediaの本文から機械的に読み取ったもので、誤りを含むことがあります。</p>
       <p>「人物で探す」は、その人物のWikipedia記事にリンクしている寺院・神社・城の記事を探して表示します。「地域の統計」の人口・高齢化率・死亡者数は総務省「住民基本台帳に基づく人口、人口動態及び世帯数」、市区町村の境界は国土数値情報(スマートニュース メディア研究所による軽量版)を使っています。</p>
+      <p>坐禅会・写経・宿坊・縁日などの体験・行事は、各寺や観光協会などの公開情報をもとに手入力しています(出典と確認日つき)。日時は変わることがあるため、お出かけ前に各寺へご確認ください。</p>
+      <h2>一覧ページ</h2>
+      <ul class="small">
+        <li><a href="p/">都道府県別のお寺一覧</a></li>
+        <li><a href="experiences.html">坐禅会・写経・宿坊・縁日のあるお寺</a></li>
+        <li><a href="llms.txt">AI向けのサイト案内(llms.txt)</a></li>
+      </ul>
       <p id="aboutStats" class="muted small"></p>
       <p class="muted small">地図:国土地理院(地理院タイル)/ 寺院データ:© OpenStreetMap contributors (ODbL)、Wikidata (CC0)、Wikipedia (CC BY-SA)</p>
     </section>

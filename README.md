@@ -50,6 +50,53 @@
 - `site/` … サイトの見た目(`index.html`・`style.css`・`app.js`)
 - `scripts/` … データ取得と判定のプログラム
 
+## 坐禅会・宿坊・縁日など(体験・行事)
+
+`data/experiences.json` に手入力します。寺の名前と大まかな緯度経度で、地図上の寺に自動で結び付きます(半径3km以内)。
+日程は `weekly`(毎週)、`monthly_days`(毎月○日)、`monthly_nth`(第n○曜)、`annual`(毎年)、`daily`(通年)、`text`(言葉だけ)で書けます。
+**出典(sources)と確認日(checked)を必ず入れてください。** 日程は変わるので、年1回は公式情報で確かめ直します。
+
+## 検索エンジン・AI向け(SEO / AEO)
+
+公開のたびに `scripts/enrich.py` と `scripts/seo.py` が次のものを自動で作ります。
+
+- 寺ごとのページ `t/<寺ID>.html`(構造化データ schema.org:BuddhistTemple・Event・FAQPage・パンくず)
+  - 情報の少ない寺までページにすると「中身の薄いページ」と見なされるため、Wikipedia記事・寺格・本尊・文化財・体験のどれかがある寺だけ作ります
+- 都道府県ごとの一覧 `p/`、体験・行事の一覧 `experiences.html`
+- `sitemap.xml`・`robots.txt`・AI向けの案内 `llms.txt`
+- トップページの構造化データ(WebSite・Dataset)
+
+公開後は [Google Search Console](https://search.google.com/search-console) にサイトを登録し、`sitemap.xml` を送信してください。
+
+## AIエージェントから使う(MCP)
+
+`worker/` フォルダに MCP サーバーがあります。**Cloudflare Workers(無料枠)** で動き、データは GitHub Pages の `data/*.json` を読みます。
+パソコンでプログラムを動かし続ける必要はありません。サイトのデータを更新すれば、MCP の答えも自動で新しくなります(最大30分遅れ)。
+
+道具:`search_temples`(名前・都道府県・市区町村・宗派・体験の種類・現在地からの距離で探す)、`get_temple`(1寺の詳細)、
+`find_experiences`(坐禅会・写経・宿坊・縁日などの一覧)、`upcoming_events`(期間内の行事を日付順に)
+
+### 初回だけの準備(15分ほど)
+
+1. **Cloudflare のアカウントを作る**(無料)— https://dash.cloudflare.com/sign-up
+2. **アカウントID を控える** — Cloudflare の画面で「Workers & Pages」を開くと右側に「Account ID」があります。
+3. **鍵(APIトークン)を作る** — 右上の人のアイコン →「My Profile」→「API Tokens」→「Create Token」→
+   「Edit Cloudflare Workers」の「Use template」→ そのまま「Continue to summary」→「Create Token」。表示された文字列を控えます(一度しか表示されません)。
+4. **GitHub に鍵を登録する** — このリポジトリの「Settings」→「Secrets and variables」→「Actions」→「New repository secret」で2つ登録:
+   - 名前 `CLOUDFLARE_API_TOKEN` … 手順3の文字列
+   - 名前 `CLOUDFLARE_ACCOUNT_ID` … 手順2のID
+5. **公開する** — 「Actions」タブ → 左の「MCPサーバーを公開(Cloudflare Workers)」→「Run workflow」。
+   完了すると、ログの最後に `https://temple-map-mcp.<あなたの名前>.workers.dev` のようなURLが出ます。
+
+ブラウザでそのURLを開いて「日本の寺院マップ MCP サーバー」と出れば成功です。
+
+### AIにつなぐ
+
+接続先は **`https://temple-map-mcp.<あなたの名前>.workers.dev/mcp`**(最後に `/mcp` を付けます)。
+Claude では、設定のコネクタから「カスタムコネクタを追加」でこのURLを登録します。認証はありません(読み取り専用)。
+
+`worker/wrangler.toml` の `TEMPLE_SITE_URL` は、データを読むサイトのURLです。ユーザー名やリポジトリ名を変えたら直してください。
+
 ## ライセンス表記
 
 地図:国土地理院(地理院タイル)/ 寺院データ:© OpenStreetMap contributors(ODbL)、Wikidata(CC0)、Wikipedia(CC BY-SA)
