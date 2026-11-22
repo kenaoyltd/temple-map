@@ -162,7 +162,7 @@ def build():
         exps = [exp_by_id[x] for x in (v(r, "exp") or []) if x in exp_by_id]
         rich = v(r, "wp") or v(r, "tier") <= 3 or v(r, "flags") or exps or v(r, "honzon")
         addr = v(r, "addr") or ""
-        pref = pref_of(addr, region)
+        pref = v(r, "pref") or pref_of(addr, region)
         temples.append({"r": r, "name": name, "exps": exps, "page": bool(rich), "pref": pref, "city": city_of(addr, pref)})
 
     urls = [(BASE, TODAY), (BASE + "p/", TODAY), (BASE + "experiences.html", TODAY)]

@@ -8,7 +8,8 @@
   python scripts/pipeline.py build         # raw/ から統合だけ
 
 環境変数:
-  REGION   対象地域。「全国」(既定)または都道府県名(例: 群馬県)
+  REGION   対象地域。「全国」(既定)、都道府県名(例: 群馬県)、地方名(例: 関東)、
+           または都道府県のカンマ区切り(例: 東京都,神奈川県)
   REFRESH  1 なら raw/ に既存データがあっても取り直す(既定 1)
 """
 import json
@@ -28,11 +29,13 @@ _uc.allowed_gai_family = lambda: socket.AF_INET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import classify as C  # noqa: E402
+from regions import pref_in_text, region_prefs, short  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = Path(os.environ.get("RAW_DIR", ROOT / "raw"))
 OUT = ROOT / "site" / "data" / "temples.json"
 REGION = os.environ.get("REGION", "全国").strip() or "全国"
+REGION_PREFS = region_prefs(REGION)  # 全国なら None
 REFRESH = os.environ.get("REFRESH", "1") == "1"
 REPO = os.environ.get("GITHUB_REPOSITORY", "local")
 UA = f"japan-temple-map/1.0 (https://github.com/{REPO})"
@@ -113,14 +116,19 @@ out center tags;"""
             log(f"  累計 {len(elements)} 件")
             time.sleep(10)
     else:
-        q = f"""[out:json][timeout:800];
-area["name"="{REGION}"]["admin_level"="4"]->.pref;
+        for pref in REGION_PREFS:
+            q = f"""[out:json][timeout:800];
+area["name"="{pref}"]["admin_level"="4"]->.pref;
 nwr{sel}(area.pref);
 out center tags;"""
-        log(f"OSM: {REGION} を取得中…")
-        data = overpass(q, need_elements=True)
-        for el in data.get("elements", []):
-            elements[f"{el['type'][0]}{el['id']}"] = el
+            log(f"OSM: {pref} を取得中…")
+            data = overpass(q, need_elements=True)
+            for el in data.get("elements", []):
+                el.setdefault("tags", {})["_pref"] = pref  # どの都道府県で取れたか
+                elements[f"{el['type'][0]}{el['id']}"] = el
+            log(f"  累計 {len(elements)} 件")
+            if len(REGION_PREFS) > 1:
+                time.sleep(10)
     if not elements:
         raise RuntimeError(f"OSM から寺院が1件も取れませんでした(REGION={REGION} の綴りを確認してください)")
     save("osm.json", list(elements.values()))
@@ -371,13 +379,13 @@ PREFS = ("北海道 青森県 岩手県 宮城県 秋田県 山形県 福島県 
 
 
 def outside_region(text):
-    """地域モードで、説明文が別の都道府県を指していれば True"""
-    if REGION == "全国" or not text:
+    """地域モードで、説明文が対象外の都道府県を指していれば True"""
+    if not REGION_PREFS or not text:
         return False
     head = text[:200]
-    if REGION in head or REGION.rstrip("都府県") in head[:60]:
+    if any(p in head or short(p) in head[:60] for p in REGION_PREFS):
         return False
-    return any(p in head for p in PREFS if p != REGION)
+    return any(p in head for p in PREFS if p not in REGION_PREFS)
 
 
 def dist_m(a_lat, a_lon, b_lat, b_lon):
@@ -542,6 +550,18 @@ def build():
             temples.append(t)
             head_for[id(t)] = h
 
+    # 都道府県:住所 → OSMで取った県 → 近くの寺の県 → 対象が1県ならその県
+    def pref_of_temple(t, addr):
+        p = pref_in_text(addr) or t["tags"].get("_pref", "")
+        if not p:
+            for o in grid.near(t["lat"], t["lon"], r=3):
+                if o["tags"].get("_pref") and dist_m(t["lat"], t["lon"], o["lat"], o["lon"]) < 5000:
+                    p = o["tags"]["_pref"]
+                    break
+        if not p and REGION_PREFS and len(REGION_PREFS) == 1:
+            p = REGION_PREFS[0]
+        return p
+
     # 4) 各寺の属性を決める
     rows = []
     stats = {"total": 0, "sect_known": 0, "year_known": 0, "wp": 0}
@@ -672,7 +692,7 @@ def build():
             {"temple": 0, "hall": 1, "noname": 2}[kind], {"": 0, "wd": 1, "wp": 2, "list": 3, "ib": 4}[ysrc],
             ("|" + "|".join(flags) + "|") if flags else "", fuda[:60], bunka[:120], honzon[:40], sango[:20],
             chuko[:30], ytext, 1 if legend else 0,
-            tel[:20], web[:120], addr[:60],
+            tel[:20], web[:120], addr[:60], pref_of_temple(t, addr),
         ])
 
     rows.sort(key=lambda r: (-r[4], r[2]))  # 寺格の低いものから描く(上位寺院が上に重なる)
@@ -682,7 +702,7 @@ def build():
         "stats": stats,
         "fields": ["lon", "lat", "name", "sect", "tier", "year", "branch", "rank", "wp", "wd", "osm", "founder", "kind", "ysrc",
                    "flags", "fuda", "bunka", "honzon", "sango", "chuko", "ytext", "legend",
-                   "tel", "web", "addr"],
+                   "tel", "web", "addr", "pref"],
         "rows": rows,
     }
     OUT.parent.mkdir(parents=True, exist_ok=True)

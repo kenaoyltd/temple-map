@@ -182,6 +182,7 @@ function templeShort(D, r, dist, base) {
     rank: v(D, r, "rank") || D.tiers[v(D, r, "tier")] || "",
     address: v(D, r, "addr"), lat: v(D, r, "lat"), lon: v(D, r, "lon"),
   };
+  if (v(D, r, "pref")) o.prefecture = v(D, r, "pref");
   if (v(D, r, "year")) o.founded = v(D, r, "year");
   if (v(D, r, "honzon")) o.honzon = v(D, r, "honzon");
   const exps = (v(D, r, "exp") || []).filter((x) => D.expById[x]).map((x) => D.expById[x].title);
@@ -241,7 +242,7 @@ const TOOLS = {
         if (!name) continue;
         if (kw && !norm(name).includes(kw)) continue;
         const addr = v(D, r, "addr") || "";
-        if (a.prefecture && !prefMatch(a.prefecture, addr, D.meta.region)) continue;
+        if (a.prefecture && !prefMatch(a.prefecture, v(D, r, "pref") || addr, D.meta.region)) continue;
         if (cty && !addr.includes(cty)) continue;
         if (sec) {
           const s = D.sects[v(D, r, "sect")] || {};

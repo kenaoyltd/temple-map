@@ -17,6 +17,9 @@ from pathlib import Path
 
 import requests
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from regions import region_prefs  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "site" / "data" / "muni.json"
 TEMPLES = ROOT / "site" / "data" / "temples.json"
@@ -114,17 +117,17 @@ def load_population(urls):
 
 # ---------------------------------------------------------------- 境界
 def load_boundaries():
-    if REGION == "全国":
-        url = TOPO + "s0001/N03-21_210101.json"
+    prefs = region_prefs(REGION)
+    if prefs is None:
+        urls = [TOPO + "s0001/N03-21_210101.json"]
     else:
-        pc = PREF_CODES.get(REGION)
-        if not pc:
-            raise RuntimeError(f"都道府県名が不明です: {REGION}")
-        url = TOPO + f"s0010/N03-21_{pc}_210101.json"
-    log("境界データ:", url)
-    gj = S.get(url, timeout=120).json()
+        urls = [TOPO + f"s0010/N03-21_{PREF_CODES[p]}_210101.json" for p in prefs]
+    features = []
+    for url in urls:
+        log("境界データ:", url)
+        features += S.get(url, timeout=120).json()["features"]
     merged = {}
-    for f in gj["features"]:
+    for f in features:
         p = f.get("properties") or {}
         code = p.get("N03_007")
         if not code:
