@@ -76,7 +76,7 @@ def fresh(name):
 # ---------------------------------------------------------------- OSM
 def overpass(query, need_elements=False):
     last = None
-    for attempt in range(6):
+    for attempt in range(9):
         url = OVERPASS[attempt % len(OVERPASS)]
         try:
             r = S.post(url, data={"data": query}, timeout=900)
@@ -117,6 +117,14 @@ out center tags;"""
             time.sleep(10)
     else:
         for pref in REGION_PREFS:
+            # 途中で失敗しても、取れた県は次回(24時間以内)そのまま使う
+            part = f"osm_part_{pref}.json"
+            pp = RAW / part
+            if pp.exists() and time.time() - pp.stat().st_mtime < 24 * 3600:
+                for el in load(part):
+                    elements[f"{el['type'][0]}{el['id']}"] = el
+                log(f"OSM: {pref} は取得済みのデータを使用(累計 {len(elements)} 件)")
+                continue
             q = f"""[out:json][timeout:800];
 area["name"="{pref}"]["admin_level"="4"]->.pref;
 nwr{sel}(area.pref);
@@ -126,6 +134,7 @@ out center tags;"""
             for el in data.get("elements", []):
                 el.setdefault("tags", {})["_pref"] = pref  # どの都道府県で取れたか
                 elements[f"{el['type'][0]}{el['id']}"] = el
+            save(part, data.get("elements", []))
             log(f"  累計 {len(elements)} 件")
             if len(REGION_PREFS) > 1:
                 time.sleep(10)
