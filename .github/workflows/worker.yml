@@ -24,8 +24,15 @@ jobs:
 
       - name: Cloudflare Workers に公開
         if: env.HAS_TOKEN == 'true'
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: worker
+        working-directory: worker
+        env:
+          RAW_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RAW_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          # 貼り付け時に混ざった空白・改行を取り除いてから使う
+          export CLOUDFLARE_API_TOKEN="$(printf '%s' "$RAW_TOKEN" | tr -d '[:space:]')"
+          export CLOUDFLARE_ACCOUNT_ID="$(printf '%s' "$RAW_ACCOUNT" | tr -d '[:space:]')"
+          case "$CLOUDFLARE_API_TOKEN" in
+            *[!A-Za-z0-9_-]*) echo "::error::CLOUDFLARE_API_TOKEN に使えない文字が入っています。Cloudflare のトークンだけをコピーし直して登録してください。"; exit 1;;
+          esac
+          npx --yes wrangler@4 deploy
