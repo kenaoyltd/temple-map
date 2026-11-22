@@ -20,6 +20,11 @@ import time
 from pathlib import Path
 
 import requests
+import socket
+import urllib3.util.connection as _uc
+
+# GitHub Actions では IPv6 で接続できないことがあるため、IPv4 だけを使う
+_uc.allowed_gai_family = lambda: socket.AF_INET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import classify as C  # noqa: E402
@@ -66,15 +71,20 @@ def fresh(name):
 
 
 # ---------------------------------------------------------------- OSM
-def overpass(query):
+def overpass(query, need_elements=False):
     last = None
     for attempt in range(6):
         url = OVERPASS[attempt % len(OVERPASS)]
         try:
             r = S.post(url, data={"data": query}, timeout=900)
             if r.status_code == 200:
-                return r.json()
-            last = f"{url} HTTP {r.status_code}"
+                data = r.json()
+                # サーバーによっては地域の判定に失敗して空の結果を返すので、別のサーバーで取り直す
+                if not need_elements or data.get("elements"):
+                    return data
+                last = f"{url} 結果が0件({data.get('remark', '')[:80]})"
+            else:
+                last = f"{url} HTTP {r.status_code}"
         except Exception as e:  # noqa: BLE001
             last = f"{url} {e}"
         log("  Overpass 再試行:", last)
@@ -108,7 +118,7 @@ area["name"="{REGION}"]["admin_level"="4"]->.pref;
 nwr{sel}(area.pref);
 out center tags;"""
         log(f"OSM: {REGION} を取得中…")
-        data = overpass(q)
+        data = overpass(q, need_elements=True)
         for el in data.get("elements", []):
             elements[f"{el['type'][0]}{el['id']}"] = el
     if not elements:
