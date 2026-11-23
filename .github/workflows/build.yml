@@ -8,6 +8,14 @@ on:
         description: "対象地域(空欄なら region.txt の値。例: 群馬県 / 全国)"
         required: false
         default: ""
+      continue:
+        description: "続きから取得(自動で使います。通常は空欄)"
+        required: false
+        default: ""
+      round:
+        description: "続きの回数(自動で使います)"
+        required: false
+        default: "0"
   # 毎月2日 午前3時(日本時間)にデータを取り直す
   schedule:
     - cron: "17 18 1 * *"
@@ -19,6 +27,7 @@ permissions:
   contents: read
   pages: write
   id-token: write
+  actions: write   # 全国のように時間がかかるとき、続きを自動で次の実行に回すため
 
 concurrency:
   group: pages
@@ -27,7 +36,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 240
+    timeout-minutes: 350
+    outputs:
+      more: ${{ steps.data.outputs.more }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,12 +65,24 @@ jobs:
           restore-keys: raw-${{ steps.cfg.outputs.key }}-
 
       - name: データ取得と統合
+        id: data
         env:
           REGION: ${{ steps.cfg.outputs.region }}
           REFRESH: ${{ steps.cfg.outputs.refresh }}
+          CONTINUE: ${{ github.event.inputs.continue }}
+          BUDGET_MIN: "280"
         run: |
           pip install requests openpyxl
+          set +e
           python scripts/pipeline.py all
+          code=$?
+          set -e
+          if [ "$code" = "75" ]; then
+            echo "more=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::データが多いため、続きを次の実行で取得します(サイトは前回の版のまま)"
+            exit 0
+          fi
+          [ "$code" = "0" ] || exit "$code"
           python scripts/population.py
           python scripts/persons.py
           python scripts/enrich.py
@@ -72,16 +95,32 @@ jobs:
           path: raw
           key: raw-${{ steps.cfg.outputs.key }}-${{ github.run_id }}
 
+      - name: 続きの取得を予約する
+        if: steps.data.outputs.more == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REGION: ${{ steps.cfg.outputs.region }}
+          ROUND: ${{ github.event.inputs.round || '0' }}
+        run: |
+          next=$((ROUND + 1))
+          if [ "$next" -gt 8 ]; then echo "::error::8回続けても終わりませんでした。時間をおいて手動で実行してください"; exit 1; fi
+          gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME" -f region="$REGION" -f continue=1 -f round="$next"
+          echo "続き(${next}回目)を予約しました"
+
       - name: 更新がすぐ反映されるようにファイル名に版番号を付ける
+        if: steps.data.outputs.more != '1'
         run: sed -i -E 's/(src|href)="([a-z]+\.(js|css))"/\1="\2?v=${{ github.run_id }}"/g' site/index.html
 
       - uses: actions/configure-pages@v5
+        if: steps.data.outputs.more != '1'
       - uses: actions/upload-pages-artifact@v3
+        if: steps.data.outputs.more != '1'
         with:
           path: site
 
   deploy:
     needs: build
+    if: needs.build.outputs.more != '1'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

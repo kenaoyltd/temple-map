@@ -36,6 +36,8 @@
     noname: false,
     flags: new Set(),
     kw: null,
+    visit: "all",      // 参拝記録での絞り込み:all / yes(行った寺) / no(まだの寺)
+    visited: new Set(),
   };
 
   // ---------------- 集計
@@ -55,7 +57,7 @@
     features: rows.map((r, i) => ({
       type: "Feature", id: i,
       geometry: { type: "Point", coordinates: [r[F.lon], r[F.lat]] },
-      properties: { i, s: r[F.sect], t: r[F.tier], y: r[F.year], k: r[F.kind], n: r[F.name], fl: val(r, "flags") || "" },
+      properties: { i, s: r[F.sect], t: r[F.tier], y: r[F.year], k: r[F.kind], n: r[F.name], fl: val(r, "flags") || "", v: 0 },
     })),
   };
 
@@ -101,6 +103,16 @@
         "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, ["case", ["==", ["get", "t"], 1], 1.2, ["==", ["get", "t"], 2], 0.8, ["!=", ["get", "fl"], ""], 1, 0], 11, ["case", ["==", ["get", "t"], 1], 2, ["==", ["get", "t"], 2], 1.5, ["!=", ["get", "fl"], ""], 2.2, 0.8]],
       },
     });
+    // 参拝済みの寺は金色の輪で囲む
+    map.addLayer({
+      id: "visited-ring", type: "circle", source: "temples", filter: ["==", ["get", "v"], 1],
+      paint: {
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 5, 9, 9, 14, 15],
+        "circle-stroke-color": "#c9a227",
+        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 4, 1.5, 12, 3.5],
+      },
+    });
     map.addLayer({
       id: "labels", type: "symbol", source: "temples",
       filter: ["<=", ["get", "t"], 2],
@@ -120,7 +132,7 @@
       paint: { "text-color": "#5f564a", "text-halo-color": "#f6f1e7", "text-halo-width": 1.4 },
     });
     applyFilter();
-    window.TM = { map, rows, F, SECTS, openPopup, flyTo, titleToIdx, esc, fmt };
+    window.TM = { map, rows, F, SECTS, TIERS, openPopup, flyTo, titleToIdx, esc, fmt, val, setVisited, setVisitMode };
     document.dispatchEvent(new Event("tm-ready"));
     if (!location.hash || location.hash.length < 4) {
       // データのある範囲に合わせて表示(外れ値を除くため上下1%を切る)
@@ -140,6 +152,15 @@
     openPopup(f.properties.i);
   });
 
+  // ---------------- 参拝記録(visited.js から呼ばれる)
+  function setVisited(set) {
+    state.visited = new Set(set);
+    geo.features.forEach((f) => { f.properties.v = state.visited.has(f.properties.i) ? 1 : 0; });
+    if (map.getSource("temples")) map.getSource("temples").setData(geo);
+    applyFilter();
+  }
+  function setVisitMode(mode) { state.visit = ["all", "yes", "no"].includes(mode) ? mode : "all"; applyFilter(); }
+
   // ---------------- フィルタ
   function passes(r) {
     if (!state.sects.has(r[F.sect]) || !state.tiers.has(r[F.tier])) return false;
@@ -149,6 +170,7 @@
     if (k === 1 && !state.halls) return false;
     if (k === 2 && !state.noname) return false;
     if (state.kw && !state.kw.has(r.__i)) return false;
+    if (state.visit !== "all" && state.visited.has(r.__i) !== (state.visit === "yes")) return false;
     if (state.flags.size) { const fl = val(r, "flags") || ""; if (![...state.flags].some((f) => fl.includes("|" + f + "|"))) return false; }
     return true;
   }
@@ -165,7 +187,9 @@
     ];
     if (state.kw) filter.push(["in", ["get", "i"], ["literal", [...state.kw]]]);
     if (state.flags.size) filter.push(["any", ...[...state.flags].map((f) => ["in", "|" + f + "|", ["get", "fl"]])]);
+    if (state.visit !== "all") filter.push(["==", ["get", "v"], state.visit === "yes" ? 1 : 0]);
     if (map.getLayer("temples")) {
+      map.setFilter("visited-ring", ["all", filter, ["==", ["get", "v"], 1]]);
       map.setFilter("temples", filter);
       map.setFilter("labels", ["all", filter, ["<=", ["get", "t"], 2]]);
       map.setFilter("labels-all", ["all", filter, [">", ["get", "t"], 2]]);
@@ -403,7 +427,7 @@
     links.push(`<a href="https://www.google.com/maps/search/?api=1&query=${r[F.lat]},${r[F.lon]}" target="_blank" rel="noopener">Googleマップ</a>`);
     if (r[F.osm]) links.push(`<a href="https://www.openstreetmap.org/${r[F.osm]}" target="_blank" rel="noopener">OSM</a>`);
     if (r[F.wd]) links.push(`<a href="https://www.wikidata.org/wiki/${r[F.wd]}" target="_blank" rel="noopener">Wikidata</a>`);
-    const html = `<div class="pop">
+    const html = `<div class="pop" data-idx="${i}">
       <h3>${esc(name)}</h3>
       <div class="tags">
         <span class="tag sect" style="background:${s.color}">${esc(s.name)}</span>
@@ -431,10 +455,12 @@
       ${r[F.wp] ? `<details class="more" data-kind="hist"><summary>歴史・由来・伝説(Wikipedia)</summary><div class="more-body">読み込み中…</div></details>` : ""}
       ${name && r[F.kind] !== 2 ? `<details class="more" data-kind="ndl"><summary>国立国会図書館の関連資料</summary><div class="more-body">読み込み中…</div></details>` : ""}
       ${flags.includes("無住") ? `<p class="src">※「無住」はWikipedia等に記述があることを示す目安です。過去の時期の記述の場合もあります。</p>` : ""}
+      <div class="visit-slot"></div>
       <div class="plinks">${links.join("")}</div>
     </div>`;
     if (popup) popup.remove();
     popup = new maplibregl.Popup({ maxWidth: "380px", offset: 10 }).setLngLat([r[F.lon], r[F.lat]]).setHTML(html).addTo(map);
+    document.dispatchEvent(new CustomEvent("temple-popup", { detail: { i, el: popup.getElement() } }));
     popup.getElement().querySelectorAll("details.more").forEach((d) => d.addEventListener("toggle", () => {
       if (!d.open || d.dataset.loaded) return;
       d.dataset.loaded = "1";

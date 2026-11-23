@@ -2,7 +2,7 @@
 (function () {
   "use strict";
   const start = () => {
-    const { map, esc } = window.TM;
+    const { map, esc, rows, F, flyTo } = window.TM;
     const box = map.getContainer();
     const narrow = () => window.innerWidth <= 760;
 
@@ -32,7 +32,7 @@
     // ---------- 検索窓
     const form = document.createElement("form");
     form.className = "map-search";
-    form.innerHTML = `<input type="search" list="psList" placeholder="人物名でゆかりの地を検索(例:徳川家康)" aria-label="人物名でゆかりの地を検索"><button>検索</button>`;
+    form.innerHTML = `<input type="search" list="psList" placeholder="寺の名前・人物名で検索(例:善光寺、徳川家康)" aria-label="寺の名前・人物名で検索"><button>検索</button>`;
     box.appendChild(form);
     ["click", "mousedown", "touchstart", "dblclick", "wheel"].forEach((ev) => form.addEventListener(ev, (e) => e.stopPropagation()));
     const q = form.querySelector("input");
@@ -40,17 +40,48 @@
       const ps = document.getElementById("psInput");
       if (ps) { ps.value = q.value; ps.dispatchEvent(new Event("input")); }
     });
+    // 入力(または音声)の内容から「寺を探す」「近くの寺」「人物のゆかりの地」を自動で振り分ける
+    const NEAR = /近く|近所|周辺|この辺|このあたり|現在地/;
+    const TAIL = /(?:の)?(?:ゆかりの(?:地|寺|場所)|ゆかり|関連の(?:寺|場所)|について|を?探して|を?検索して?|を?教えて|はどこ(?:に(?:ある|あります)?)?(?:ですか)?|に行きたい|へ行きたい|を?見せて|を?表示して)(?:ください|下さい)?$/;
+    const norm = (s) => s.replace(/[\s　。、,.!?！？「」『』]/g, "").replace(/佛/g, "仏").replace(/峯/g, "峰");
+    const strip = (s) => { let t = norm(s), p; do { p = t; t = t.replace(TAIL, ""); } while (t !== p && t); return t.replace(/^(?:お寺の|寺院の)/, ""); };
+    const panelTo = (tab) => {
+      document.querySelector(`.tab[data-tab="${tab}"]`)?.click();
+      const panel = document.getElementById("panel");
+      panel.classList.remove("closed"); panel.classList.remove("expanded");
+    };
+    window.TMSearch = (raw) => {
+      const v = String(raw || "").trim().slice(0, 60);
+      if (!v) return;
+      if (NEAR.test(v)) {   // 「近くのお寺」→ 現在地へ
+        document.querySelector(".maplibregl-ctrl-geolocate")?.click();
+        return "near";
+      }
+      const t = strip(v);
+      window.TMSearch.last = t;
+      if (!t) return;
+      const wantsPerson = /ゆかり/.test(v);
+      let hits = wantsPerson ? [] : rows.filter((r) => r[F.kind] !== 2 && norm(r[F.name] || "") === t);
+      if (!wantsPerson && !hits.length && /(寺|院|庵|堂|坊|山|大師|観音|不動)$/.test(t)) hits = rows.filter((r) => r[F.kind] !== 2 && norm(r[F.name] || "").includes(t));
+      if (hits.length === 1) { flyTo(hits[0].__i); return "temple"; }
+      if (hits.length > 1) {   // 同じ名前の寺が複数 → 一覧を出す
+        const se = document.getElementById("search");
+        se.value = t; se.dispatchEvent(new Event("input"));
+        panelTo("filter");
+        return "temples";
+      }
+      const ps = document.getElementById("psInput");
+      if (!ps) return;
+      ps.value = t; q.value = t;
+      panelTo("person");
+      document.getElementById("psForm").requestSubmit();
+      return "person";
+    };
     form.addEventListener("submit", (e) => {
       e.preventDefault();
       const v = q.value.trim();
-      const ps = document.getElementById("psInput");
-      if (!v || !ps) return;
-      ps.value = v;
-      document.querySelector('.tab[data-tab="person"]')?.click();
-      const panel = document.getElementById("panel");
-      panel.classList.remove("closed");
-      panel.classList.remove("expanded");
-      document.getElementById("psForm").requestSubmit();
+      if (!v) return;
+      window.TMSearch(v);
       q.blur();
     });
 
@@ -72,7 +103,7 @@
     const setRow = (k, on) => row(k).classList.toggle("on", !!on);
     const vis = (layers, on) => layers.forEach((id) => map.getLayer(id) && map.setLayoutProperty(id, "visibility", on ? "visible" : "none"));
 
-    const setTemples = (on) => { setRow("temples", on); vis(["temples", "labels", "labels-all"], on); };
+    const setTemples = (on) => { setRow("temples", on); vis(["temples", "visited-ring", "labels", "labels-all"], on); };
     const setPerson = (on) => { setRow("person", on); vis(["person-pt", "person-label"], on); };
     const setStats = (on) => {
       const sel = document.getElementById("statSel");

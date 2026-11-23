@@ -11,6 +11,11 @@
   REGION   対象地域。「全国」(既定)、都道府県名(例: 群馬県)、地方名(例: 関東)、
            または都道府県のカンマ区切り(例: 東京都,神奈川県)
   REFRESH  1 なら raw/ に既存データがあっても取り直す(既定 1)
+  CONTINUE 1 なら「続きから」:最近(RESUME_HOURS 時間以内)取ったデータは取り直さない
+  BUDGET_MIN  データ取得に使ってよい時間(分)。超えたら途中まで保存して終了コード 75 で終わる
+              (GitHub Actions がそれを見て、続きを次の実行に回す)。0 なら制限なし
+
+全国は量が多いので、都道府県ごと・区画ごと・記事50件ごとに途中保存しながら取得する。
 """
 import json
 import math
@@ -29,7 +34,7 @@ _uc.allowed_gai_family = lambda: socket.AF_INET
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import classify as C  # noqa: E402
-from regions import pref_in_text, region_prefs, short  # noqa: E402
+from regions import PREFS as ALL_PREFS, pref_in_text, region_prefs, short  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 RAW = Path(os.environ.get("RAW_DIR", ROOT / "raw"))
@@ -37,6 +42,23 @@ OUT = ROOT / "site" / "data" / "temples.json"
 REGION = os.environ.get("REGION", "全国").strip() or "全国"
 REGION_PREFS = region_prefs(REGION)  # 全国なら None
 REFRESH = os.environ.get("REFRESH", "1") == "1"
+CONTINUE = os.environ.get("CONTINUE", "") == "1"
+RESUME_SEC = float(os.environ.get("RESUME_HOURS", "72")) * 3600
+BUDGET_MIN = float(os.environ.get("BUDGET_MIN", "0") or 0)
+T0 = time.time()
+
+
+class NeedMore(Exception):
+    """時間切れ。ここまでの分は raw/ に保存済みで、次の実行で続きから取る"""
+
+
+def check_time(where):
+    if BUDGET_MIN and time.time() - T0 > BUDGET_MIN * 60:
+        raise NeedMore(where)
+
+
+def recent(path):
+    return path.exists() and time.time() - path.stat().st_mtime < RESUME_SEC
 REPO = os.environ.get("GITHUB_REPOSITORY", "local")
 UA = f"japan-temple-map/1.0 (https://github.com/{REPO})"
 
@@ -70,7 +92,8 @@ def load(name):
 
 
 def fresh(name):
-    return (RAW / name).exists() and not REFRESH
+    p = RAW / name
+    return p.exists() and (not REFRESH or (CONTINUE and recent(p)))
 
 
 # ---------------------------------------------------------------- OSM
@@ -101,43 +124,30 @@ def fetch_osm():
         return
     sel = '["amenity"="place_of_worship"]["religion"="buddhist"]'
     elements = {}
-    if REGION == "全国":
-        # 日本を緯度帯で分けて取得(1回の応答が大きくなりすぎないように)
-        bands = [(20, 32), (32, 34), (34, 34.8), (34.8, 35.5), (35.5, 36.3), (36.3, 38), (38, 40.5), (40.5, 46)]
-        for s, n in bands:
-            q = f"""[out:json][timeout:800][maxsize:2000000000];
-area["ISO3166-1"="JP"][admin_level=2]->.jp;
-nwr{sel}(area.jp)({s},122,{n},154);
-out center tags;"""
-            log(f"OSM: 北緯{s}〜{n}度 を取得中…")
-            data = overpass(q)
-            for el in data.get("elements", []):
+    prefs = REGION_PREFS or ALL_PREFS   # 全国も都道府県ごとに取る(1回の応答を小さく・途中から再開できるように)
+    for pref in prefs:
+        # 途中で失敗・時間切れになっても、取れた県は次回(RESUME_HOURS 以内)そのまま使う
+        part = f"osm_part_{pref}.json"
+        pp = RAW / part
+        if recent(pp):
+            for el in load(part):
                 elements[f"{el['type'][0]}{el['id']}"] = el
-            log(f"  累計 {len(elements)} 件")
-            time.sleep(10)
-    else:
-        for pref in REGION_PREFS:
-            # 途中で失敗しても、取れた県は次回(24時間以内)そのまま使う
-            part = f"osm_part_{pref}.json"
-            pp = RAW / part
-            if pp.exists() and time.time() - pp.stat().st_mtime < 24 * 3600:
-                for el in load(part):
-                    elements[f"{el['type'][0]}{el['id']}"] = el
-                log(f"OSM: {pref} は取得済みのデータを使用(累計 {len(elements)} 件)")
-                continue
-            q = f"""[out:json][timeout:800];
+            log(f"OSM: {pref} は取得済みのデータを使用(累計 {len(elements)} 件)")
+            continue
+        check_time(f"OSM {pref}")
+        q = f"""[out:json][timeout:800];
 area["name"="{pref}"]["admin_level"="4"]->.pref;
 nwr{sel}(area.pref);
 out center tags;"""
-            log(f"OSM: {pref} を取得中…")
-            data = overpass(q, need_elements=True)
-            for el in data.get("elements", []):
-                el.setdefault("tags", {})["_pref"] = pref  # どの都道府県で取れたか
-                elements[f"{el['type'][0]}{el['id']}"] = el
-            save(part, data.get("elements", []))
-            log(f"  累計 {len(elements)} 件")
-            if len(REGION_PREFS) > 1:
-                time.sleep(10)
+        log(f"OSM: {pref} を取得中…")
+        data = overpass(q, need_elements=True)
+        for el in data.get("elements", []):
+            el.setdefault("tags", {})["_pref"] = pref  # どの都道府県で取れたか
+            elements[f"{el['type'][0]}{el['id']}"] = el
+        save(part, data.get("elements", []))
+        log(f"  累計 {len(elements)} 件")
+        if len(prefs) > 1:
+            time.sleep(10)
     if not elements:
         raise RuntimeError(f"OSM から寺院が1件も取れませんでした(REGION={REGION} の綴りを確認してください)")
     save("osm.json", list(elements.values()))
@@ -205,17 +215,30 @@ def fetch_wikidata():
         bbox = (min(p[0] for p in pts) - 0.02, min(p[1] for p in pts) - 0.02,
                 max(p[0] for p in pts) + 0.02, max(p[1] for p in pts) + 0.02)
     # 寺が無い海上などを飛ばすため、OSMの寺がある2度格子だけ問い合わせる
-    step = 2.0 if REGION == "全国" else 0.5
+    step = 1.0 if REGION == "全国" else 0.5
     cells = set()
     for lat, lon in pts:
         cells.add((math.floor(lat / step) * step, math.floor(lon / step) * step))
     rows = []
     cells = sorted(cells)
+    part = RAW / "wikidata_part.json"
+    done = set()
+    if recent(part):   # 前回の途中から
+        prev = load("wikidata_part.json") or {}
+        rows, done = prev.get("rows", []), {tuple(c) for c in prev.get("done", [])}
+        log(f"Wikidata: 前回の途中から再開(済み {len(done)}/{len(cells)} 区画)")
     for i, (s, w) in enumerate(cells):
+        if (s, w) in done:
+            continue
+        if i and i % 5 == 0:
+            save("wikidata_part.json", {"rows": rows, "done": sorted(done)})
+        check_time("Wikidata")
         s2, w2 = max(s, bbox[0]), max(w, bbox[1])
         n2, e2 = min(s + step, bbox[2]), min(w + step, bbox[3])
         log(f"Wikidata: 区画 {i + 1}/{len(cells)} ({s2:.1f},{w2:.1f})")
         collect_box(s2, w2, n2, e2, 0, rows)
+        done.add((s, w))
+    save("wikidata_part.json", {"rows": rows, "done": sorted(done)})
 
     items = {}
     for r in rows:
@@ -345,8 +368,17 @@ def fetch_wikipedia():
     titles = sorted(titles)
     log(f"Wikipedia: {len(titles)} 記事の冒頭と情報欄を取得")
     pages = {}
+    part = RAW / "wikipedia_part.json"
+    if recent(part):   # 前回の途中から
+        pages = load("wikipedia_part.json") or {}
+        log(f"Wikipedia: 前回の途中から再開(取得済み {len(pages)} 件)")
     for i in range(0, len(titles), 20):
         batch = titles[i:i + 20]
+        if all(t in pages for t in batch):
+            continue
+        if (i // 20) % 50 == 0:
+            save("wikipedia_part.json", pages)
+            check_time("Wikipedia")
         for attempt in range(3):
             try:
                 r = S.get(JAWP_API, params={"action": "query", "prop": "extracts|revisions|coordinates",
@@ -726,11 +758,15 @@ def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "all"
     log(f"対象地域: {REGION}")
     if cmd in ("all", "fetch"):
-        fetch_osm()
-        fetch_wikidata()
-        fetch_ranked()
-        fetch_muju()
-        fetch_wikipedia()
+        try:
+            fetch_osm()
+            fetch_wikidata()
+            fetch_ranked()
+            fetch_muju()
+            fetch_wikipedia()
+        except NeedMore as e:
+            log(f"時間切れのため、ここまで({e})で保存しました。続きは次の実行で取得します。")
+            sys.exit(75)
     if cmd in ("all", "build"):
         build()
 
