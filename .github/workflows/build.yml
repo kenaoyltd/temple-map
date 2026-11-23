@@ -71,6 +71,7 @@ jobs:
           REFRESH: ${{ steps.cfg.outputs.refresh }}
           CONTINUE: ${{ github.event.inputs.continue }}
           BUDGET_MIN: "280"
+          ROUND: ${{ github.event.inputs.round || '0' }}
         run: |
           pip install requests openpyxl
           set +e

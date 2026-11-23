@@ -46,6 +46,8 @@ CONTINUE = os.environ.get("CONTINUE", "") == "1"
 RESUME_SEC = float(os.environ.get("RESUME_HOURS", "72")) * 3600
 BUDGET_MIN = float(os.environ.get("BUDGET_MIN", "0") or 0)
 T0 = time.time()
+ROUND = int(os.environ.get("ROUND", "0") or 0)   # 続きの実行の何回目か
+OSM_MISSING = []   # Overpass が混んでいて取れなかった都道府県(次の実行で取り直す)
 
 
 class NeedMore(Exception):
@@ -99,7 +101,7 @@ def fresh(name):
 # ---------------------------------------------------------------- OSM
 def overpass(query, need_elements=False):
     last = None
-    for attempt in range(9):
+    for attempt in range(6):
         url = OVERPASS[attempt % len(OVERPASS)]
         try:
             r = S.post(url, data={"data": query}, timeout=900)
@@ -125,31 +127,54 @@ def fetch_osm():
     sel = '["amenity"="place_of_worship"]["religion"="buddhist"]'
     elements = {}
     prefs = REGION_PREFS or ALL_PREFS   # 全国も都道府県ごとに取る(1回の応答を小さく・途中から再開できるように)
-    for pref in prefs:
-        # 途中で失敗・時間切れになっても、取れた県は次回(RESUME_HOURS 以内)そのまま使う
-        part = f"osm_part_{pref}.json"
-        pp = RAW / part
-        if recent(pp):
-            for el in load(part):
-                elements[f"{el['type'][0]}{el['id']}"] = el
-            log(f"OSM: {pref} は取得済みのデータを使用(累計 {len(elements)} 件)")
-            continue
-        check_time(f"OSM {pref}")
+    def get(pref):
         q = f"""[out:json][timeout:800];
 area["name"="{pref}"]["admin_level"="4"]->.pref;
 nwr{sel}(area.pref);
 out center tags;"""
         log(f"OSM: {pref} を取得中…")
-        data = overpass(q, need_elements=True)
+        try:
+            data = overpass(q, need_elements=True)
+        except RuntimeError as e:
+            # 1つの県で失敗しても止めずに次の県へ。取れなかった県は後で取り直す
+            log(f"  {pref} は今回取れませんでした({e})。後で取り直します。")
+            return False
         for el in data.get("elements", []):
             el.setdefault("tags", {})["_pref"] = pref  # どの都道府県で取れたか
             elements[f"{el['type'][0]}{el['id']}"] = el
-        save(part, data.get("elements", []))
+        save(f"osm_part_{pref}.json", data.get("elements", []))
         log(f"  累計 {len(elements)} 件")
-        if len(prefs) > 1:
+        return True
+
+    for pref in prefs:
+        # 途中で失敗・時間切れになっても、取れた県は次回(RESUME_HOURS 以内)そのまま使う
+        part = f"osm_part_{pref}.json"
+        if recent(RAW / part):
+            for el in load(part):
+                elements[f"{el['type'][0]}{el['id']}"] = el
+            log(f"OSM: {pref} は取得済みのデータを使用(累計 {len(elements)} 件)")
+            continue
+        check_time(f"OSM {pref}")
+        if not get(pref):
+            OSM_MISSING.append(pref)
+        elif len(prefs) > 1:
             time.sleep(10)
+    # 取れなかった県は、時間の許す限り間を空けて取り直す(Overpass が混んでいるときの対策)
+    tries = 0
+    while OSM_MISSING and tries < 6:
+        tries += 1
+        log(f"OSM: 未取得 {len(OSM_MISSING)} 県({'、'.join(OSM_MISSING)})。10分待って取り直します({tries}回目)。")
+        time.sleep(600)
+        for pref in list(OSM_MISSING):
+            check_time("OSM " + "、".join(OSM_MISSING))
+            if get(pref):
+                OSM_MISSING.remove(pref)
+    if OSM_MISSING and ROUND < 4:
+        raise NeedMore("OSM " + "、".join(OSM_MISSING))
     if not elements:
         raise RuntimeError(f"OSM から寺院が1件も取れませんでした(REGION={REGION} の綴りを確認してください)")
+    if OSM_MISSING:
+        log(f"OSM: {'、'.join(OSM_MISSING)} は何度試しても取れなかったため、今回はこの県を除いて公開します。")
     save("osm.json", list(elements.values()))
     log(f"OSM: 合計 {len(elements)} 件")
 
