@@ -404,6 +404,86 @@ async function handleRpc(msg, env) {
   }
 }
 
+
+// ---------------------------------------------------------------- OAuth(ログイン不要の自動承認)
+// Claude のカスタムコネクタは、サーバーが OAuth を案内しないと「サインインが必要」と判断して
+// 失敗することがある。このサーバーは公開データの読み取り専用なので、誰でも即座に承認する
+// 最小限の OAuth を用意して接続を通す(トークンは確認しない)。
+
+const REDIRECT_HOSTS = ["claude.ai", "claude.com", "anthropic.com", "localhost", "127.0.0.1"];
+
+function redirectAllowed(uri) {
+  try {
+    const u = new URL(uri);
+    const h = u.hostname;
+    const hostOk = REDIRECT_HOSTS.some((d) => h === d || h.endsWith("." + d));
+    const local = h === "localhost" || h === "127.0.0.1";
+    return hostOk && (u.protocol === "https:" || (local && u.protocol === "http:"));
+  } catch { return false; }
+}
+
+const rand = () => crypto.randomUUID().replace(/-/g, "") + crypto.randomUUID().replace(/-/g, "");
+
+function oauthMeta(origin) {
+  return {
+    issuer: origin,
+    authorization_endpoint: origin + "/authorize",
+    token_endpoint: origin + "/token",
+    registration_endpoint: origin + "/register",
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256", "plain"],
+    token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
+    scopes_supported: ["mcp"],
+  };
+}
+
+async function readForm(request) {
+  const ct = request.headers.get("content-type") || "";
+  if (ct.includes("application/json")) { try { return await request.json(); } catch { return {}; } }
+  try { return Object.fromEntries(new URLSearchParams(await request.text())); } catch { return {}; }
+}
+
+async function handleOAuth(request, url) {
+  const origin = url.origin;
+  const p = url.pathname;
+  if (p.startsWith("/.well-known/oauth-protected-resource")) {
+    return json({ resource: origin + "/mcp", authorization_servers: [origin], bearer_methods_supported: ["header"], scopes_supported: ["mcp"] });
+  }
+  if (p.startsWith("/.well-known/oauth-authorization-server") || p.startsWith("/.well-known/openid-configuration")) {
+    return json(oauthMeta(origin));
+  }
+  if (p === "/register" && request.method === "POST") {
+    const b = await readForm(request);
+    const uris = Array.isArray(b.redirect_uris) ? b.redirect_uris : [];
+    if (uris.length && !uris.every(redirectAllowed)) return json({ error: "invalid_redirect_uri" }, 400);
+    return json({
+      client_id: "temple-map-" + rand().slice(0, 24),
+      client_id_issued_at: Math.floor(Date.now() / 1000),
+      client_name: b.client_name || "client",
+      redirect_uris: uris,
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    }, 201);
+  }
+  if (p === "/authorize") {
+    const redirect = url.searchParams.get("redirect_uri") || "";
+    if (!redirectAllowed(redirect)) return new Response("redirect_uri が許可されていません", { status: 400, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+    const back = new URL(redirect);
+    back.searchParams.set("code", rand());
+    const state = url.searchParams.get("state");
+    if (state) back.searchParams.set("state", state);
+    return Response.redirect(back.toString(), 302);
+  }
+  if (p === "/token" && request.method === "POST") {
+    await readForm(request);
+    return new Response(JSON.stringify({ access_token: rand(), token_type: "Bearer", expires_in: 31536000, refresh_token: rand(), scope: "mcp" }),
+      { status: 200, headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...CORS } });
+  }
+  return null;
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -422,6 +502,9 @@ export default {
       const out = await handleRpc(body, env);
       return out ? json(out) : new Response(null, { status: 202, headers: CORS });
     }
+
+    const oa = await handleOAuth(request, url);
+    if (oa) return oa;
 
     if (url.pathname === "/" || url.pathname === "") {
       const base = siteUrl(env);
